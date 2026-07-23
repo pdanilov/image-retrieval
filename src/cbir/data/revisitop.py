@@ -57,7 +57,7 @@ def download(name: str):
 
     # Imported lazily so the rest of the CLI doesn't pay for it on every invocation.
     from aiohttp import ClientTimeout
-    from datasets import load_dataset
+    from datasets import Dataset, load_dataset
 
     spec = SUPPORTED[name]
 
@@ -80,6 +80,11 @@ def download(name: str):
         trust_remote_code=True,
         storage_options=storage_options,
     )
+    # load_dataset's return type is a DatasetDict/Dataset/IterableDataset union with
+    # no overload keyed on `split`/`streaming`, so the type checker can't narrow it —
+    # assert what a concrete split with streaming=False (the default) always returns.
+    assert isinstance(query, Dataset)
+    assert isinstance(db, Dataset)
 
     if len(db) != spec.expected_db or len(query) != spec.expected_queries:
         raise RuntimeError(

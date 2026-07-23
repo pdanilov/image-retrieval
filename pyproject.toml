@@ -38,7 +38,7 @@ line-length = 120
 extend-exclude = ["*.ipynb"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B"]
+select = ["E", "F", "I", "UP", "B", "C4", "SIM", "RUF", "PTH", "N"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
