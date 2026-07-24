@@ -2,8 +2,8 @@ import pytest
 
 from cbir.data.revisitop import SUPPORTED, UNSUPPORTED_CONFIGS, download
 
-# These are the verified counts documented in AGENTS.md — a change here must be a
-# deliberate, re-verified update to that table, not an incidental edit.
+# Verified against the upstream benchmark release — a change here must be a
+# deliberate, re-verified update, not an incidental edit.
 EXPECTED_COUNTS = {
     "roxford5k": (4993, 70),
     "rparis6k": (6322, 70),

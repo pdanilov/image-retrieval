@@ -346,6 +346,9 @@ matter and needs its own justification.
 - Tests: the evaluation code gets real unit tests with hand-computed expected values —
   a known ranking with a known mAP. This is the part that must not be silently wrong.
 - Never commit images, descriptors, or indexes. `data/` stays gitignored.
+- Don't reference `AGENTS.md` by name in docstrings — a docstring should explain the
+  code on its own terms, not point at a governance file that can move or change
+  wording. Put "why" context directly in the docstring instead.
 
 ## Working agreements
 

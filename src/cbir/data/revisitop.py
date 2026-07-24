@@ -2,8 +2,11 @@
 
 Uses the `galilai-group/revisitop` HF loading script (`trust_remote_code=True`,
 requires `datasets<4.0`). Only `roxford5k` and `rparis6k` are exposed here — the
-`revisitop1m` and `oxfordparis` configs in that script are broken (see AGENTS.md)
-and are rejected with an explanation rather than silently producing bad data.
+`revisitop1m` split generator raises `TypeError` before yielding anything (mismatched
+keyword argument), and `oxfordparis` silently produces wrong ground truth (it
+concatenates Oxford and Paris without offsetting Paris indices past Oxford's image
+count), so both are rejected with an explanation rather than silently producing bad
+data.
 
 Downloads land in the default HF cache (`~/.cache/huggingface`), shared across
 projects, rather than under this repo's `data/` — the raw archives are large,
@@ -51,7 +54,7 @@ def download(name: str):
     or renamed files and every ground-truth index downstream would be wrong.
     """
     if name in UNSUPPORTED_CONFIGS:
-        raise ValueError(f"'{name}' is not supported: {UNSUPPORTED_CONFIGS[name]}. See AGENTS.md for details.")
+        raise ValueError(f"'{name}' is not supported: {UNSUPPORTED_CONFIGS[name]}.")
     if name not in SUPPORTED:
         raise ValueError(f"unknown dataset '{name}', expected one of {sorted(SUPPORTED)}")
 
@@ -89,8 +92,10 @@ def download(name: str):
     if len(db) != spec.expected_db or len(query) != spec.expected_queries:
         raise RuntimeError(
             f"{name}: expected {spec.expected_db} database / {spec.expected_queries} "
-            f"query images, got {len(db)} / {len(query)}. Do not proceed with this "
-            "data — see AGENTS.md's note on silent index corruption."
+            f"query images, got {len(db)} / {len(query)}. Do not proceed with this data — "
+            "a mismatch means the loader silently skipped or renamed files, and every "
+            "easy/hard/junk index downstream is a position into the full database list, "
+            "so it would now point at the wrong image."
         )
 
     print(f"{name}: {len(db)} database images, {len(query)} queries — OK")

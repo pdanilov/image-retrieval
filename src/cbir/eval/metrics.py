@@ -2,9 +2,11 @@
 
 Reimplements the evaluation algorithm from Radenović et al., "Revisiting Oxford and
 Paris" (CVPR 2018) — https://github.com/filipradenovic/revisitop `evaluate.py` — so
-the harness has no runtime dependency on that repo. See AGENTS.md for the three
-protocols (Easy/Medium/Hard) and why ignored images must be removed from the ranking
-rather than treated as negatives.
+the harness has no runtime dependency on that repo. Three protocols per query, Easy/
+Medium/Hard, differing only in which ground-truth images count as positive and which
+are ignored: Easy scores against `easy` positives (ignoring `hard`+`junk`), Medium
+against `easy`+`hard` (ignoring `junk`), Hard against `hard` (ignoring `easy`+`junk`).
+Ignored images are dropped from the ranking before scoring — they are not negatives.
 """
 
 from __future__ import annotations
@@ -43,8 +45,9 @@ def protocol_sets(
 ) -> tuple[set[int], set[int]]:
     """Return (positive, ignored) index sets for one query under one protocol.
 
-    Ignored images are dropped from the ranking before scoring — they are not treated
-    as negatives. See the Easy/Medium/Hard table in AGENTS.md.
+    Easy: positive=easy, ignored=hard+junk. Medium: positive=easy+hard, ignored=junk.
+    Hard: positive=hard, ignored=easy+junk. Ignored images are dropped from the
+    ranking before scoring — they are not treated as negatives.
     """
     easy_s, hard_s, junk_s = set(easy), set(hard), set(junk)
     match protocol:
