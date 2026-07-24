@@ -262,6 +262,7 @@ source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
     { name = "datasets" },
+    { name = "numpy" },
     { name = "tyro" },
 ]
 
@@ -270,7 +271,6 @@ dev = [
     { name = "ipykernel" },
     { name = "jupyter" },
     { name = "matplotlib" },
-    { name = "numpy" },
     { name = "pillow" },
     { name = "pre-commit" },
     { name = "pytest" },
@@ -281,6 +281,7 @@ dev = [
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.14.2" },
     { name = "datasets", specifier = "<4.0" },
+    { name = "numpy", specifier = ">=2.5.1" },
     { name = "tyro", specifier = ">=1.0.15" },
 ]
 
@@ -289,7 +290,6 @@ dev = [
     { name = "ipykernel", specifier = ">=7.3.0" },
     { name = "jupyter", specifier = ">=1.1.1" },
     { name = "matplotlib", specifier = ">=3.11.1" },
-    { name = "numpy", specifier = ">=2.5.1" },
     { name = "pillow", specifier = ">=12.3.0" },
     { name = "pre-commit", specifier = ">=4.6.1" },
     { name = "pytest", specifier = ">=9.1.1" },
