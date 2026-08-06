@@ -52,7 +52,7 @@ src/cbir/
   eval/          mAP / mP@k, the three protocols, results serialization
   cli.py         entry point: extract / index / search / evaluate
 notebooks/       analysis and figures ONLY — no pipeline logic
-results/         committed JSON/CSV run outputs
+results/         committed JSONL run outputs (append-only, one run per line)
 tests/
 data/            gitignored: cached descriptors (NOT raw dataset archives — see below)
 ```
@@ -330,9 +330,13 @@ matter and needs its own justification.
 - **Weights & Biases** for run tracking. Requires `WANDB_API_KEY` in the environment;
   never commit it. Support `WANDB_MODE=offline` and make sure the pipeline runs
   end-to-end without a W&B account — tracking is an observer, not a dependency.
-- Every evaluation also writes a **local JSON to `results/`** containing the metrics,
-  the resolved config, and the git commit. These are committed. W&B is convenience;
-  `results/` is the record.
+- Every evaluation also appends a row to **`results/runs.jsonl`** containing the metrics,
+  the resolved config, and the git commit. One JSON object per line, append-only: a run
+  never rewrites an earlier row, so diffs are always new lines, two runs cannot conflict,
+  and re-running a configuration records a *second* row rather than overwriting the
+  first. That history is the point — when a number moves, the pair of rows and their
+  commit hashes say when it moved and what changed, which a file holding only current
+  values cannot answer. These are committed. W&B is convenience; `results/` is the record.
 - Descriptor extraction is the expensive step. Cache descriptors to `data/` keyed by
   (dataset, descriptor config), and make the cache key include everything that changes
   the output. A stale cache silently invalidates results.
