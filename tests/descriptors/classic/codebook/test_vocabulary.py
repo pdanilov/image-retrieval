@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from cbir.descriptors.classic.vocabulary import Vocabulary
+from cbir.descriptors.classic.codebook.vocabulary import Vocabulary
 
 # Three well-separated centers used across the assignment tests.
 CENTERS = np.array([[0.0, 0.0], [10.0, 0.0], [0.0, 10.0]], dtype=np.float32)

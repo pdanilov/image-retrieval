@@ -1,6 +1,6 @@
 import pytest
 
-import cbir.descriptors.classic.cache_db as cache_db
+import cbir.descriptors.classic.cache.db as cache_db
 
 
 @pytest.fixture

@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from cbir.descriptors.classic.gaussian_mixture import GaussianMixture
+from cbir.descriptors.classic.codebook.gaussian_mixture import GaussianMixture
 
 
 def test_single_component_responsibility_is_one():

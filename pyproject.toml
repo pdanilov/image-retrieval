@@ -53,3 +53,8 @@ select = ["E", "F", "I", "UP", "B", "C4", "SIM", "RUF", "PTH", "N"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The tests tree mirrors src/cbir/, so basenames repeat across directories
+# (descriptors/classic/test_rootsift.py vs descriptors/classic/cache/test_rootsift.py).
+# importlib mode imports each by full path instead of by basename, which keeps those
+# distinct without scattering __init__.py files through the test tree.
+addopts = ["--import-mode=importlib"]

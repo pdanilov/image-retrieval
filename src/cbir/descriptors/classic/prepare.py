@@ -15,7 +15,7 @@ from cbir.data.crop import crop_query
 from cbir.data.holdout import EvalDataset, HeldOutSplit, held_out_database
 from cbir.data.images import image_paths, iter_images
 from cbir.data.revisitop import download
-from cbir.descriptors.classic.rootsift_cache import cached_extract_many, cached_pooled_descriptors
+from cbir.descriptors.classic.cache.rootsift import RootSIFTCache
 
 
 @dataclass(frozen=True)
@@ -42,23 +42,23 @@ def prepare_classic_inputs(eval_dataset: EvalDataset) -> ClassicDescriptorInputs
     # time. The held-out pool is just the *other* dataset's own database descriptors,
     # so this reuses (or populates) that dataset's "database" cache entry rather than
     # a separate one -- and it's read as one pooled array directly
-    # (`cached_pooled_descriptors`), not unpacked-then-reconcatenated, since at
+    # (`RootSIFTCache.pooled`), not unpacked-then-reconcatenated, since at
     # held-out scale (tens of millions of rows) that round trip would transiently
     # hold two full copies in memory.
     held_out_ds = held_out_database(split)
-    held_out_descriptors = cached_pooled_descriptors(
+    held_out_descriptors = RootSIFTCache.pooled(
         split.held_out_dataset, "database", iter_images(image_paths(held_out_ds))
     )
 
     query_ds, database_ds = download(eval_dataset)
-    database_descriptors = cached_extract_many(eval_dataset, "database", iter_images(image_paths(database_ds)))
+    database_descriptors = RootSIFTCache.extract_many(eval_dataset, "database", iter_images(image_paths(database_ds)))
 
     # Queries are cropped to their ground-truth region before extraction. `bbx` is a
     # plain float column, so reading it whole costs nothing worth deferring.
     cropped_queries = (
         crop_query(image, bbx) for image, bbx in zip(iter_images(image_paths(query_ds)), query_ds["bbx"], strict=True)
     )
-    query_descriptors = cached_extract_many(eval_dataset, "query", cropped_queries)
+    query_descriptors = RootSIFTCache.extract_many(eval_dataset, "query", cropped_queries)
 
     return ClassicDescriptorInputs(
         held_out_dataset=split.held_out_dataset,

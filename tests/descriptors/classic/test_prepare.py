@@ -37,25 +37,31 @@ def test_prepare_classic_inputs_wires_held_out_database_and_queries(monkeypatch)
         calls.setdefault("cropped", []).append((image, bbx))
         return f"cropped({image})"
 
-    def fake_cached_pooled_descriptors(dataset, role, images):
-        # `images` is a lazy iterable (see rootsift_cache.py) -- consume it to confirm
-        # it's iterable and to see the images, mirroring what a real cache miss does.
-        materialized = list(images)
-        calls.setdefault("pooled_calls", []).append((dataset, role, materialized))
-        return np.zeros((len(materialized), 128), dtype=np.float32)
+    class FakeRootSIFTCache:
+        """Records what each cached call was handed, and how many descriptors to return.
 
-    def fake_cached_extract_many(dataset, role, images):
-        materialized = list(images)
-        calls.setdefault("extract_many_calls", []).append((dataset, role, materialized))
-        return [np.zeros((1, 128), dtype=np.float32) for _ in materialized]
+        `images` is a lazy iterable (see cache/rootsift.py) -- these consume it, both to
+        confirm it is iterable and to see the images, mirroring a real cache miss.
+        """
+
+        @staticmethod
+        def pooled(dataset, role, images):
+            materialized = list(images)
+            calls.setdefault("pooled_calls", []).append((dataset, role, materialized))
+            return np.zeros((len(materialized), 128), dtype=np.float32)
+
+        @staticmethod
+        def extract_many(dataset, role, images):
+            materialized = list(images)
+            calls.setdefault("extract_many_calls", []).append((dataset, role, materialized))
+            return [np.zeros((1, 128), dtype=np.float32) for _ in materialized]
 
     monkeypatch.setattr(prepare_module, "held_out_database", fake_held_out_database)
     monkeypatch.setattr(prepare_module, "download", fake_download)
     monkeypatch.setattr(prepare_module, "image_paths", fake_image_paths)
     monkeypatch.setattr(prepare_module, "iter_images", fake_iter_images)
     monkeypatch.setattr(prepare_module, "crop_query", fake_crop_query)
-    monkeypatch.setattr(prepare_module, "cached_pooled_descriptors", fake_cached_pooled_descriptors)
-    monkeypatch.setattr(prepare_module, "cached_extract_many", fake_cached_extract_many)
+    monkeypatch.setattr(prepare_module, "RootSIFTCache", FakeRootSIFTCache)
 
     result = prepare_classic_inputs("roxford5k")
 
@@ -63,8 +69,8 @@ def test_prepare_classic_inputs_wires_held_out_database_and_queries(monkeypatch)
     # The held-out training pool comes from the *other* dataset, never roxford5k itself.
     assert calls["held_out_split"].eval_dataset == "roxford5k"
     assert calls["held_out_split"].held_out_dataset == "rparis6k"
-    # Carried through so vocabulary_cache/gaussian_mixture_cache key on the training
-    # data's actual identity, not the eval dataset.
+    # Carried through so the vocabulary/GMM caches key on the training data's actual
+    # identity, not the eval dataset.
     assert result.held_out_dataset == "rparis6k"
     # Eval database/queries come from the eval dataset itself.
     assert calls["download_name"] == "roxford5k"

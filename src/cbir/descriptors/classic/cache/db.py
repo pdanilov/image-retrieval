@@ -1,6 +1,6 @@
 """Shared SQLite index for the classic pipeline's disk caches.
 
-`rootsift_cache.py`, `vocabulary_cache.py`, and `gaussian_mixture_cache.py` each still
+`rootsift.py`, `vocabulary.py`, and `gaussian_mixture.py` in this package each still
 store their actual array data in `.npz` files under `data/<name>/` (gitignored — see
 `.gitignore`'s `/data/` rule) -- this database (`data/cache.sqlite3`, also under that
 same rule) is purely an index from a cache key to the `.npz` file that holds it. A
