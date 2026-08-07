@@ -327,16 +327,30 @@ matter and needs its own justification.
   Every knob that affects a number lives in a typed dataclass in `src/cbir/configs/`,
   not in a bare Python default or a notebook cell, so it shows up in `--help` and in
   the run's recorded config.
-- **Weights & Biases** for run tracking. Requires `WANDB_API_KEY` in the environment;
-  never commit it. Support `WANDB_MODE=offline` and make sure the pipeline runs
-  end-to-end without a W&B account — tracking is an observer, not a dependency.
+- **trackio** for run tracking, as an optional dependency. Import it defensively
+  (`try: import trackio / except ImportError: return`) so a machine without it still
+  evaluates — tracking is an observer, not a dependency. No account, key, or network is
+  needed: it writes one SQLite file per project and is queryable from the terminal
+  (`trackio list runs`, `trackio query project --sql ...`, `trackio show` for a
+  dashboard, `trackio sync` to publish to a Hugging Face Space if ever wanted).
+- Leave trackio's storage at its default `~/.cache/huggingface/trackio/`, for the same
+  reason the benchmark archives live in the user-wide HF cache: it is local scratch, and
+  a SQLite binary would not diff usefully in git. `TRACKIO_DIR` can relocate it, but
+  do not point it into this repo.
+- Not W&B, which an earlier version of this file specified. It needs an account and a
+  secret, and its comparison story is the web UI, while this project is evaluation-only
+  — every run is a dozen terminal-state scalars, never a training curve. Not DVCLive
+  either: its experiments are git refs scoped to the commit they ran from, which plain
+  `git push` silently drops and which vanish from `dvc exp show` after the next commit.
+  Revisit if fine-tuning ever enters scope, since that is when curves start to matter.
 - Every evaluation also appends a row to **`results/runs.jsonl`** containing the metrics,
   the resolved config, and the git commit. One JSON object per line, append-only: a run
   never rewrites an earlier row, so diffs are always new lines, two runs cannot conflict,
   and re-running a configuration records a *second* row rather than overwriting the
   first. That history is the point — when a number moves, the pair of rows and their
   commit hashes say when it moved and what changed, which a file holding only current
-  values cannot answer. These are committed. W&B is convenience; `results/` is the record.
+  values cannot answer. These are committed, and `cbir results` reads them back.
+  trackio is convenience; `results/` is the record.
 - Descriptor extraction is the expensive step. Cache descriptors to `data/` keyed by
   (dataset, descriptor config), and make the cache key include everything that changes
   the output. A stale cache silently invalidates results.
