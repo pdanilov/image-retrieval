@@ -49,8 +49,8 @@ src/cbir/
     cnn/         Neural Codes; GeM (⊃ SPoC, MAC), R-MAC, whitening
     foundation/  DINOv2/DINOv3, CLIP, SigLIP global descriptors
   search/        exact torch matmul search (no ANN — see Search backend)
-  eval/          mAP / mP@k, the three protocols, results serialization
-  cli.py         entry point: extract / index / search / evaluate
+  eval/          mAP / mP@k, the three protocols, the run pipeline, results serialization
+  cli.py         entry point: download / evaluate / results
 notebooks/       analysis and figures ONLY — no pipeline logic
 results/         committed JSONL run outputs (append-only, one run per line)
 tests/

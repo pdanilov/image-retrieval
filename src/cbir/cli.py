@@ -2,15 +2,28 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from dataclasses import replace
+from typing import Annotated, Literal
 
 import tyro
 
+from cbir.configs.classic import BoWConfig, ClassicConfig, FisherConfig, RunConfig, VLADConfig
+from cbir.data.holdout import EvalDataset
 from cbir.data.revisitop import SUPPORTED, download
 from cbir.eval.metrics import Protocol
 from cbir.eval.results import RunRecord, latest, load
 
 PROTOCOLS: tuple[Protocol, ...] = ("easy", "medium", "hard")
+
+Descriptor = Annotated[
+    Annotated[BoWConfig, tyro.conf.subcommand("bow")]
+    | Annotated[VLADConfig, tyro.conf.subcommand("vlad")]
+    | Annotated[FisherConfig, tyro.conf.subcommand("fisher")],
+    # Named "" so the technique reads as a bare subcommand (`cbir evaluate bow --k 5000`)
+    # rather than `descriptor:bo-w-config`, and each technique's --help lists only its
+    # own knobs.
+    tyro.conf.arg(name=""),
+]
 
 
 def download_cmd(
@@ -85,9 +98,64 @@ def results_cmd(
     print(_render([_row(record, metric) for record in records], headers))
 
 
+def sweep_configs(
+    descriptor: ClassicConfig, dataset: EvalDataset, mp_at_k: int, ks: tuple[int, ...]
+) -> list[RunConfig]:
+    """One `RunConfig` per swept `k`, or a single run when nothing is swept.
+
+    A sweep is just a list of configs (AGENTS.md: no sweeper plugin at this scale). `k`
+    is the only swept axis because it is the only one that costs anything to change —
+    it re-trains the codebook, while `power`/`intra_norm` are cheap post-processing
+    that can be compared by re-running the encode.
+    """
+    values = ks or (descriptor.k,)
+    return [RunConfig(descriptor=replace(descriptor, k=k), dataset=dataset, mp_at_k=mp_at_k) for k in values]
+
+
+def evaluate_cmd(
+    descriptor: Descriptor,
+    dataset: EvalDataset = "roxford5k",
+    mp_at_k: int = 10,
+    sweep_k: tuple[int, ...] = (),
+    record: bool = True,
+) -> None:
+    """Train, encode, search and score one classic-tier configuration.
+
+    The vocabulary is always trained on the *other* dataset — that pairing is derived,
+    not configurable. Results are appended to `results/runs.jsonl`; read them back with
+    `cbir results`.
+
+    Args:
+        descriptor: Technique to evaluate, with its own hyper-parameters.
+        dataset: Benchmark to evaluate on.
+        mp_at_k: Cutoff for mean precision@k. mAP is always over the full ranking.
+        sweep_k: Run once per value, overriding the technique's `k`. Empty runs once.
+        record: Append to results/runs.jsonl (and mirror to trackio). Off for scratch runs.
+    """
+    # Imported here, not at module scope: `runner` pulls in torch (via search/exact),
+    # a multi-second import that `cbir download` and `cbir results` never need. The
+    # config dataclasses do have to be imported eagerly -- tyro reads them off this
+    # function's annotations to build the subcommands.
+    from cbir.eval.runner import run
+
+    configs = sweep_configs(descriptor, dataset, mp_at_k, sweep_k)
+    records = []
+    for index, config in enumerate(configs, start=1):
+        if len(configs) > 1:
+            print(f"[{index}/{len(configs)}] {config.descriptor.technique} k={config.descriptor.k} on {dataset}")
+        records.append(run(config, record=record))
+
+    print()
+    headers = ["dataset", "held-out", "technique", "params", *PROTOCOLS, "commit", "recorded"]
+    print(_render([_row(run_record, "map") for run_record in records], headers))
+    if not record:
+        print("\n(not recorded: --no-record)")
+
+
 def main() -> None:
     subcommands = {
         "download": download_cmd,
+        "evaluate": evaluate_cmd,
         "results": results_cmd,
     }
     tyro.extras.subcommand_cli_from_dict(subcommands)

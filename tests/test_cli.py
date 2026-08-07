@@ -1,7 +1,8 @@
 import pytest
 
 import cbir.eval.results as results_module
-from cbir.cli import _format_params, _render, results_cmd
+from cbir.cli import _format_params, _render, results_cmd, sweep_configs
+from cbir.configs.classic import BoWConfig, VLADConfig
 from cbir.eval.results import RunRecord, append
 
 
@@ -29,6 +30,30 @@ def _record(technique="bow", k=5000, dataset="roxford5k", map_=0.1484, **kwargs)
         commit="abc1234",
         **kwargs,
     )
+
+
+def test_sweep_expands_k_into_one_config_each():
+    configs = sweep_configs(BoWConfig(k=5000, seed=3), "roxford5k", 10, (1000, 20000))
+
+    assert [config.descriptor.k for config in configs] == [1000, 20000]
+    # Everything else must survive the expansion -- a sweep that silently reset the
+    # seed would produce rows that look comparable and are not.
+    assert {config.descriptor.seed for config in configs} == {3}
+    assert {config.dataset for config in configs} == {"roxford5k"}
+
+
+def test_sweep_preserves_technique_specific_knobs():
+    configs = sweep_configs(VLADConfig(k=64, intra_norm=False, power=0.5), "rparis6k", 5, (16, 32))
+
+    assert [config.descriptor.k for config in configs] == [16, 32]
+    assert all(config.descriptor.intra_norm is False for config in configs)
+    assert all(config.descriptor.power == 0.5 for config in configs)
+    assert all(config.mp_at_k == 5 for config in configs)
+
+
+def test_no_sweep_runs_the_configured_k_once():
+    configs = sweep_configs(BoWConfig(k=5000), "roxford5k", 10, ())
+    assert [config.descriptor.k for config in configs] == [5000]
 
 
 def test_format_params_is_sorted_so_columns_line_up():

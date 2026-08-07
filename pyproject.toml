@@ -18,6 +18,11 @@ dependencies = [
     "tyro>=1.0.15",
 ]
 
+[project.optional-dependencies]
+# Optional on purpose: `cbir.eval.tracking` imports trackio defensively, so evaluation
+# and `results/runs.jsonl` work without it. Install with `uv sync --extra tracking`.
+tracking = ["trackio>=0.34"]
+
 [project.scripts]
 cbir = "cbir.cli:main"
 
