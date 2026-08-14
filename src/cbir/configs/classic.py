@@ -87,18 +87,24 @@ class FisherConfig:
     Args:
         k: Number of mixture components. Fisher's dimensionality is `2 * k * 128`,
             twice VLAD's at the same k, so this stays smaller still.
-        seed: GMM initialization seed.
+        seed: GMM initialization seed; also seeds the training subsample.
         power: Signed power law; 0.5 is the improved-Fisher signed square root.
+        sample: Descriptors EM is fitted on, drawn from the held-out pool (0 = all).
+            Defaults to 1M rather than 0 because sklearn's GaussianMixture is
+            full-batch: on the ~21M-descriptor pools here, 0 means multi-GB E-step
+            allocations and a full Lloyd k-means init. It is recorded in `params`
+            and in the codebook cache key, so runs at different values stay distinct.
     """
 
     k: int = 64
     seed: int = 0
     power: float | None = 0.5
+    sample: int = 1_000_000
 
     technique: ClassVar[str] = "fisher"
 
     def train_and_encode(self, inputs: ClassicDescriptorInputs) -> Encoded:
-        model = FisherVector.train(inputs, k=self.k, seed=self.seed, power=self.power)
+        model = FisherVector.train(inputs, k=self.k, seed=self.seed, power=self.power, sample=self.sample)
         return model.encode(inputs.database_descriptors), model.encode(inputs.query_descriptors)
 
 

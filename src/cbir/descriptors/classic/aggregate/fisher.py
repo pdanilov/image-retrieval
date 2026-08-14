@@ -52,13 +52,17 @@ class FisherVector:
         seed: int,
         *,
         power: float | None = 0.5,
+        sample: int = 0,
     ) -> FisherVector:
         """Fit a GMM on the held-out pool. Fisher has no corpus-level fit beyond it.
 
-        GMM fitting is cached by `(inputs.held_out_dataset, k, seed)` — see
-        `cache/gaussian_mixture.py`.
+        GMM fitting is cached by `(inputs.held_out_dataset, k, seed, sample)` — see
+        `cache/gaussian_mixture.py`. `sample` caps how much of the held-out pool EM
+        sees; at these pool sizes leaving it at 0 means hours of full-batch EM.
         """
-        model = GaussianMixtureCache.train(inputs.held_out_dataset, inputs.held_out_descriptors, k=k, seed=seed)
+        model = GaussianMixtureCache.train(
+            inputs.held_out_dataset, inputs.held_out_descriptors, k=k, seed=seed, sample=sample
+        )
         return cls(model, power=power)
 
     @staticmethod

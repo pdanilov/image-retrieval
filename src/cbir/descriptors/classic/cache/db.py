@@ -69,8 +69,12 @@ CREATE TABLE IF NOT EXISTS gmm (
     dataset  TEXT NOT NULL,
     k        INTEGER NOT NULL,
     seed     INTEGER NOT NULL,
+    -- How many descriptors EM actually saw (0 = the whole pool). Part of the key, not
+    -- a detail: a GMM fitted on 1M descriptors is a different model from one fitted on
+    -- 21M, and without this column the first would silently be served for the second.
+    sample   INTEGER NOT NULL DEFAULT 0,
     filepath TEXT NOT NULL,
-    PRIMARY KEY (dataset, k, seed)
+    PRIMARY KEY (dataset, k, seed, sample)
 );
 """
 

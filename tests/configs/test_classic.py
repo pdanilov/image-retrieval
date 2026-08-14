@@ -70,7 +70,14 @@ def test_each_technique_exposes_only_its_own_knobs():
     # then be silently ignored; the union is what makes that unrepresentable.
     assert set(descriptor_params(BoWConfig())) == {"k", "seed"}
     assert set(descriptor_params(VLADConfig())) == {"k", "seed", "intra_norm", "power"}
-    assert set(descriptor_params(FisherConfig())) == {"k", "seed", "power"}
+    assert set(descriptor_params(FisherConfig())) == {"k", "seed", "power", "sample"}
+
+
+def test_fisher_records_its_training_sample_size():
+    # `sample` changes the fitted GMM, so a row that omitted it would not be
+    # reproducible and two runs at different values would collide on RunRecord.key.
+    assert descriptor_params(FisherConfig())["sample"] == 1_000_000
+    assert descriptor_params(FisherConfig(sample=0))["sample"] == 0
 
 
 def test_params_excludes_technique_so_keys_compare_like_for_like():

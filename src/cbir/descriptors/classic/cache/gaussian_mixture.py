@@ -31,25 +31,32 @@ class GaussianMixtureCache:
     """Cached diagonal-covariance GMM fitting, keyed by `(dataset, k, seed)`."""
 
     @staticmethod
-    def train(dataset: str, descriptors: np.ndarray, k: int, seed: int) -> GaussianMixture:
-        """`GaussianMixture` for `(dataset, k, seed)`: fit fresh, or loaded from disk on a hit."""
+    def train(dataset: str, descriptors: np.ndarray, k: int, seed: int, sample: int = 0) -> GaussianMixture:
+        """`GaussianMixture` for `(dataset, k, seed, sample)`: fit fresh, or loaded on a hit.
+
+        `sample` is part of the key because it changes the model, not just how long it
+        takes to get one — see `GaussianMixture.train`.
+        """
         with db.connect() as conn:
             row = conn.execute(
-                f"SELECT filepath FROM {TABLE} WHERE dataset = ? AND k = ? AND seed = ?", (dataset, k, seed)
+                f"SELECT filepath FROM {TABLE} WHERE dataset = ? AND k = ? AND seed = ? AND sample = ?",
+                (dataset, k, seed, sample),
             ).fetchone()
 
         if row is not None:
             with np.load(row[0]) as data:
                 return GaussianMixture(weights=data["weights"], means=data["means"], variances=data["variances"])
 
-        model = GaussianMixture.train(descriptors, k=k, seed=seed)
-        path = db.reserve_blob_path(TABLE, f"{dataset}_k{k}_seed{seed}")
+        model = GaussianMixture.train(descriptors, k=k, seed=seed, sample=sample)
+        # `sample` is in the filename as well as the key: two GMMs differing only by it
+        # would otherwise reserve the same path and the second would overwrite the first.
+        path = db.reserve_blob_path(TABLE, f"{dataset}_k{k}_seed{seed}_n{sample}")
         np.savez(path, weights=model.weights, means=model.means, variances=model.variances)
 
         with db.connect() as conn:
             conn.execute(
-                f"INSERT OR REPLACE INTO {TABLE} (dataset, k, seed, filepath) VALUES (?, ?, ?, ?)",
-                (dataset, k, seed, str(path)),
+                f"INSERT OR REPLACE INTO {TABLE} (dataset, k, seed, sample, filepath) VALUES (?, ?, ?, ?, ?)",
+                (dataset, k, seed, sample, str(path)),
             )
 
         return model

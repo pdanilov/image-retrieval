@@ -49,9 +49,33 @@ class GaussianMixture:
     def d(self) -> int:
         return self.means.shape[1]
 
+    @staticmethod
+    def subsample(descriptors: np.ndarray, sample: int, seed: int) -> np.ndarray:
+        """`sample` rows drawn without replacement, or all of them if there are fewer.
+
+        Separate from `train` so the draw can be tested on its own, and so the caller
+        can see that `seed` controls both the draw and EM — one seed reproduces the
+        whole fit.
+        """
+        if sample <= 0 or sample >= len(descriptors):
+            return descriptors
+        rows = np.random.default_rng(seed).choice(len(descriptors), size=sample, replace=False)
+        rows.sort()  # keep the memory access sequential; the row order carries no meaning
+        return descriptors[rows]
+
     @classmethod
-    def train(cls, descriptors: np.ndarray, k: int, *, seed: int) -> GaussianMixture:
-        """Fit a `k`-component diagonal GMM to `(m, d)` held-out descriptors via EM."""
+    def train(cls, descriptors: np.ndarray, k: int, *, seed: int, sample: int = 0) -> GaussianMixture:
+        """Fit a `k`-component diagonal GMM to `(m, d)` held-out descriptors via EM.
+
+        `sample` caps how many descriptors EM sees (0 = all of them). This is not an
+        optimization detail to leave at a default and forget: sklearn's GaussianMixture
+        is full-batch, and the held-out pools here are ~21M x 128, so each E-step
+        allocates an (m, k) responsibility matrix of several GB and `init_params`
+        defaults to a *full* Lloyd k-means over the same array. Fitting on a seeded
+        subsample of ~1M is both tractable and what the Fisher-vector literature does.
+        Whatever value is used belongs in the cache key and in the recorded run params —
+        a GMM fitted on 1M descriptors is a different model from one fitted on 21M.
+        """
         if descriptors.ndim != 2:
             raise ValueError(f"descriptors must be 2-D (m, d), got shape {descriptors.shape}")
         if k > len(descriptors):
@@ -59,8 +83,12 @@ class GaussianMixture:
 
         from sklearn.mixture import GaussianMixture as SkGaussianMixture
 
+        fitting = cls.subsample(descriptors, sample, seed)
+        if k > len(fitting):
+            raise ValueError(f"cannot fit {k} components from a {len(fitting)}-descriptor sample")
+
         model = SkGaussianMixture(n_components=k, covariance_type="diag", random_state=seed)
-        model.fit(np.ascontiguousarray(descriptors, dtype=np.float32))
+        model.fit(np.ascontiguousarray(fitting, dtype=np.float32))
         return cls(
             weights=np.asarray(model.weights_, dtype=np.float32),
             means=np.asarray(model.means_, dtype=np.float32),
