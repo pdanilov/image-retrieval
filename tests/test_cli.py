@@ -149,3 +149,28 @@ def test_results_shows_a_dash_for_a_missing_protocol(runs_path, capsys):
     cells = capsys.readouterr().out.splitlines()[2].split()
     easy, medium, hard = cells[4], cells[5], cells[6]
     assert (easy, medium, hard) == ("-", "0.1484", "-")
+
+
+def test_results_orders_k_numerically_not_as_text(runs_path, capsys):
+    # "k=20000" < "k=5000" as strings, so sorting on the formatted params alone put
+    # k=20000 between k=1000 and k=5000 -- the wrong order for the one column a sweep
+    # varies, and exactly what the first real sweep printed.
+    for k in (5000, 1000, 20000):
+        append(_record(k=k), runs_path)
+
+    results_cmd()
+
+    # Column 3 -- the params cell renders as two tokens ("k=1000 seed=0"), so the k is
+    # the 4th whitespace-separated field, not the 5th.
+    rows = capsys.readouterr().out.splitlines()[2:]
+    assert [row.split()[3] for row in rows] == ["k=1000", "k=5000", "k=20000"]
+
+
+def test_sort_key_falls_back_when_a_run_has_no_k(runs_path, capsys):
+    # A technique without a `k` (a future CNN tier) must still sort and print rather
+    # than raising on the missing key.
+    append(RunRecord("roxford5k", "rparis6k", "gem", {"p": 3.0}, {"medium": {"map": 0.5}}), runs_path)
+    append(_record(k=1000), runs_path)
+
+    results_cmd()
+    assert len(capsys.readouterr().out.splitlines()) == 4  # header, rule, two rows

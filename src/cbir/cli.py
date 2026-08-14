@@ -56,6 +56,24 @@ def _render(rows: list[list[str]], headers: list[str]) -> str:
     return "\n".join(lines)
 
 
+def _sort_key(record: RunRecord) -> tuple[str, str, int, str, str]:
+    """Order rows for reading a sweep: `k` numerically, everything else by name.
+
+    Sorting on `_format_params` alone compares `k` as text, which puts k=20000 between
+    k=1000 and k=5000 — precisely the wrong order for the column a sweep varies. `k` is
+    pulled out as an int; the formatted params still break ties so that runs differing
+    in some other knob stay grouped.
+    """
+    k = record.params.get("k")
+    return (
+        record.dataset,
+        record.technique,
+        k if isinstance(k, int) else 0,
+        _format_params(record.params),
+        record.recorded_at,
+    )
+
+
 def _row(record: RunRecord, metric: str) -> list[str]:
     cells = [record.dataset, record.held_out_dataset, record.technique, _format_params(record.params)]
     for protocol in PROTOCOLS:
@@ -93,7 +111,7 @@ def results_cmd(
             print("no runs recorded yet (results/runs.jsonl)")
         return
 
-    records.sort(key=lambda r: (r.dataset, r.technique, _format_params(r.params), r.recorded_at))
+    records.sort(key=_sort_key)
     headers = ["dataset", "held-out", "technique", "params", *PROTOCOLS, "commit", "recorded"]
     print(_render([_row(record, metric) for record in records], headers))
 
@@ -136,14 +154,12 @@ def evaluate_cmd(
     # a multi-second import that `cbir download` and `cbir results` never need. The
     # config dataclasses do have to be imported eagerly -- tyro reads them off this
     # function's annotations to build the subcommands.
-    from cbir.eval.runner import run
+    from cbir.eval.runner import run_all
 
     configs = sweep_configs(descriptor, dataset, mp_at_k, sweep_k)
-    records = []
-    for index, config in enumerate(configs, start=1):
-        if len(configs) > 1:
-            print(f"[{index}/{len(configs)}] {config.descriptor.technique} k={config.descriptor.k} on {dataset}")
-        records.append(run(config, record=record))
+    # `run_all` rather than a loop over `run`: it extracts once per dataset and shares
+    # the result. Looping here would re-read ~20 GB of cached descriptors per point.
+    records = run_all(configs, record=record, verbose=len(configs) > 1)
 
     print()
     headers = ["dataset", "held-out", "technique", "params", *PROTOCOLS, "commit", "recorded"]

@@ -149,12 +149,32 @@ def test_run_all_records_every_config_in_order(wired):
     assert [record.params["k"] for record in load()] == [3, 5, 7]
 
 
-def test_run_all_reuses_one_extraction_per_config(wired):
-    # prepare_classic_inputs is the expensive call; it is per-config here because each
-    # config may target a different dataset, but nothing must call it more than once
-    # per run.
-    run_all([RunConfig(descriptor=BoWConfig(k=k)) for k in (3, 5)])
-    assert wired["prepared"] == ["roxford5k", "roxford5k"]
+def test_run_all_extracts_once_per_dataset_not_once_per_config(wired):
+    # The cached descriptor blobs are ~20 GB for one eval direction, so re-preparing
+    # per configuration re-reads all of it for every point of a sweep. This test
+    # previously asserted one call *per config* -- it pinned the waste rather than
+    # catching it.
+    run_all([RunConfig(descriptor=BoWConfig(k=k)) for k in (3, 5, 7)])
+    assert wired["prepared"] == ["roxford5k"]
+
+
+def test_run_all_still_extracts_once_for_each_distinct_dataset(wired):
+    # Sharing is keyed by dataset: roxford5k's descriptors must never be handed to a
+    # run evaluating rparis6k, which would score one dataset's queries against the
+    # other's database.
+    run_all(
+        [
+            RunConfig(descriptor=BoWConfig(k=3), dataset="roxford5k"),
+            RunConfig(descriptor=BoWConfig(k=3), dataset="rparis6k"),
+            RunConfig(descriptor=BoWConfig(k=5), dataset="roxford5k"),
+        ]
+    )
+    assert wired["prepared"] == ["roxford5k", "rparis6k"]
+
+
+def test_run_uses_supplied_inputs_without_re_extracting(wired):
+    run(RunConfig(descriptor=BoWConfig(k=3)), inputs=wired["inputs"])
+    assert wired["prepared"] == []
 
 
 def test_search_receives_queries_first(monkeypatch, wired):

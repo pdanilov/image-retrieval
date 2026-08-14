@@ -20,7 +20,7 @@ from datasets import Dataset
 
 from cbir.configs.classic import RunConfig, descriptor_params
 from cbir.data.revisitop import download
-from cbir.descriptors.classic.prepare import prepare_classic_inputs
+from cbir.descriptors.classic.prepare import ClassicDescriptorInputs, prepare_classic_inputs
 from cbir.eval.metrics import Protocol, QueryGroundTruth, evaluate
 from cbir.eval.results import RunRecord, append
 from cbir.eval.tracking import track
@@ -40,15 +40,22 @@ def ground_truth(query_dataset: Dataset) -> list[QueryGroundTruth]:
     return [QueryGroundTruth(easy=easy, hard=hard, junk=junk) for easy, hard, junk in zip(*columns, strict=True)]
 
 
-def run(config: RunConfig, *, record: bool = True) -> RunRecord:
+def run(config: RunConfig, *, record: bool = True, inputs: ClassicDescriptorInputs | None = None) -> RunRecord:
     """Evaluate one configuration on all three protocols and record the result.
 
     `record=False` skips the `results/runs.jsonl` append (and the trackio log) — for
     tests and for exploratory runs that should not enter the committed history.
+
+    `inputs` reuses an already-extracted set of descriptors. Passing them matters more
+    than it looks: the cached blobs are ~20 GB for one eval direction, so a sweep that
+    re-prepares per configuration re-reads all of it for every point. It must be for
+    the same `config.dataset` — this is not checked, because the only caller that
+    supplies it is `run_all`, which keys them by dataset.
     """
     started = perf_counter()
 
-    inputs = prepare_classic_inputs(config.dataset)
+    if inputs is None:
+        inputs = prepare_classic_inputs(config.dataset)
     database_vectors, query_vectors = config.descriptor.train_and_encode(inputs)
 
     # Queries live in their own split (4993 database + 70 query images = the full 5063
@@ -78,11 +85,25 @@ def run(config: RunConfig, *, record: bool = True) -> RunRecord:
     return run_record
 
 
-def run_all(configs: Iterable[RunConfig], *, record: bool = True) -> list[RunRecord]:
+def run_all(configs: Iterable[RunConfig], *, record: bool = True, verbose: bool = False) -> list[RunRecord]:
     """Run every config in order, recording each as it finishes.
+
+    RootSIFT extraction depends only on the dataset, never on the technique or its `k`,
+    so it happens once per dataset and is shared by every configuration that targets it.
+    Re-preparing per configuration would re-read ~20 GB of cached descriptors for each
+    point of a sweep.
 
     Deliberately not parallel: a single run already saturates the machine (k-means over
     ~21M descriptors, then a full database encode), so running two at once would only
     contend for the same cores and the same descriptor cache.
     """
-    return [run(config, record=record) for config in configs]
+    configs = list(configs)
+    prepared: dict[str, ClassicDescriptorInputs] = {}
+    records = []
+    for index, config in enumerate(configs, start=1):
+        if verbose:
+            print(f"[{index}/{len(configs)}] {config.descriptor.technique} k={config.descriptor.k} on {config.dataset}")
+        if config.dataset not in prepared:
+            prepared[config.dataset] = prepare_classic_inputs(config.dataset)
+        records.append(run(config, record=record, inputs=prepared[config.dataset]))
+    return records
