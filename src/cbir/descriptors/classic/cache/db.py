@@ -79,14 +79,43 @@ CREATE TABLE IF NOT EXISTS gmm (
 """
 
 
+def _rename_outdated_gmm(conn: sqlite3.Connection) -> bool:
+    """Rename a pre-`sample` `gmm` table aside so `SCHEMA` can recreate it. True if renamed.
+
+    `CREATE TABLE IF NOT EXISTS` does nothing at all when the table already exists — it
+    does not reconcile columns. So adding `sample` to `SCHEMA` reached new databases and
+    silently missed every existing one, and Fisher died on `no such column: sample`
+    against a cache created before the column was added. Tests never saw it: each builds
+    its database fresh in `tmp_path`, where the table really is absent.
+
+    Renaming *before* `SCHEMA` runs is what lets the new table be created from the one
+    canonical DDL above rather than a second copy of it kept in sync here.
+    """
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(gmm)")}
+    if not columns or "sample" in columns:
+        return False
+    conn.execute("ALTER TABLE gmm RENAME TO gmm_pre_sample")
+    return True
+
+
 @contextmanager
 def connect() -> Generator[sqlite3.Connection]:
-    """One connection, schema ensured to exist, committed on a clean exit."""
+    """One connection, schema ensured to exist and up to date, committed on a clean exit."""
     path = db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
     try:
+        migrating = _rename_outdated_gmm(conn)
         conn.executescript(SCHEMA)
+        if migrating:
+            # Rows predating the column were fitted on the whole pool, which is what
+            # sample = 0 means -- so they stay valid cache entries rather than being
+            # discarded and refitted.
+            conn.execute(
+                "INSERT INTO gmm (dataset, k, seed, sample, filepath) "
+                "SELECT dataset, k, seed, 0, filepath FROM gmm_pre_sample"
+            )
+            conn.execute("DROP TABLE gmm_pre_sample")
         yield conn
         conn.commit()
     finally:
