@@ -43,6 +43,10 @@ dev = [
     "ipykernel>=7.3.0",
     "jupyter>=1.1.1",
     "matplotlib>=3.11.1",
+    # Strips notebook outputs before they reach git; wired up in .pre-commit-config.yaml
+    # as a `language: system` hook so it runs from this venv rather than one pre-commit
+    # builds itself -- that isolated install stalled and blocked commits.
+    "nbstripout>=0.9.1",
     # The comparison notebook imports pandas directly. It resolves today only because
     # `datasets` happens to depend on it -- declared here so the notebook doesn't break
     # the day that transitive dependency changes.
