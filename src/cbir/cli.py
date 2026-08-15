@@ -168,11 +168,33 @@ def evaluate_cmd(
         print("\n(not recorded: --no-record)")
 
 
+def track_cmd(current_only: bool = False) -> None:
+    """Mirror `results/runs.jsonl` into trackio, for `trackio show --project cbir`.
+
+    Every evaluation already does this as it finishes, so this is for rebuilding: the
+    trackio store is derived from the record, never the other way around. Delete
+    `~/.cache/huggingface/trackio/cbir.db` first for a clean rebuild — replaying over
+    an existing store adds runs rather than replacing them.
+
+    Args:
+        current_only: Replay only the most recent row per configuration.
+    """
+    from cbir.eval.tracking import replay
+
+    records = list(latest().values()) if current_only else load()
+    count = replay(records)
+    if count:
+        print(f"replayed {count} run(s) — view with: trackio show --project cbir")
+    else:
+        print("trackio is not installed (uv sync --extra tracking); results/runs.jsonl is unaffected")
+
+
 def main() -> None:
     subcommands = {
         "download": download_cmd,
         "evaluate": evaluate_cmd,
         "results": results_cmd,
+        "track": track_cmd,
     }
     tyro.extras.subcommand_cli_from_dict(subcommands)
 

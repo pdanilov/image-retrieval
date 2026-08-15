@@ -83,6 +83,19 @@ cross-checked on rparis6k; Fisher's GMM is fitted on a seeded 1M-descriptor subs
 `notebooks/classic_comparison.ipynb` plots all of this from `results/runs.jsonl`. Run it
 top to bottom — it ships with outputs stripped.
 
+For a browsable dashboard instead, install the optional extra and mirror the record:
+
+```
+uv sync --extra tracking
+uv run cbir track --current-only     # replay results/runs.jsonl into trackio
+trackio show --project cbir
+```
+
+trackio is entirely optional — no account, no network, one local SQLite file — and the
+store is *derived* from `results/runs.jsonl`, never the reverse. Delete
+`~/.cache/huggingface/trackio/cbir.db` and re-run `cbir track` to rebuild it from
+scratch at any time.
+
 ### Reproducing the table
 
 ```

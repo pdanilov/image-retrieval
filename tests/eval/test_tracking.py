@@ -3,7 +3,7 @@ import sys
 import pytest
 
 from cbir.eval.results import RunRecord
-from cbir.eval.tracking import config_of, flatten_metrics, run_name, track
+from cbir.eval.tracking import config_of, flatten_metrics, replay, run_name, track
 
 
 def _record(**kwargs) -> RunRecord:
@@ -107,3 +107,30 @@ def test_track_is_a_no_op_without_trackio_installed(monkeypatch):
 
     monkeypatch.setattr("builtins.__import__", no_trackio)
     track(_record())  # must not raise
+
+
+def test_replay_sends_every_record(fake_trackio):
+    count = replay([_record(), _record(technique="vlad"), _record(technique="fisher")])
+
+    assert count == 3
+    assert [call[0] for call in fake_trackio.calls].count("init") == 3
+    assert [call[0] for call in fake_trackio.calls].count("finish") == 3
+
+
+def test_replay_reports_zero_without_trackio(monkeypatch):
+    # The whole point of `replay` is rebuilding a store that may not exist on this
+    # machine at all; it must report that rather than pretending it worked.
+    real_import = __builtins__["__import__"] if isinstance(__builtins__, dict) else __builtins__.__import__
+
+    def no_trackio(name, *args, **kwargs):
+        if name == "trackio":
+            raise ImportError("No module named 'trackio'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.__import__", no_trackio)
+    assert replay([_record()]) == 0
+
+
+def test_replay_of_nothing_is_not_an_error(fake_trackio):
+    assert replay([]) == 0
+    assert fake_trackio.calls == []

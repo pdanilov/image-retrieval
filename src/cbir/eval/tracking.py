@@ -10,6 +10,7 @@ evaluation that produced it can cost an hour.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 
 from cbir.eval.results import RunRecord
@@ -62,3 +63,26 @@ def track(record: RunRecord) -> None:
         trackio.log(flatten_metrics(record))
     finally:
         trackio.finish()
+
+
+def replay(records: Iterable[RunRecord]) -> int:
+    """Mirror many runs, returning how many were sent. Zero if trackio isn't installed.
+
+    `track` is a pure function of a `RunRecord`, so the whole trackio store is derivable
+    from `results/runs.jsonl`. That makes the store disposable rather than precious: if
+    it is corrupted, or accumulates rows that no longer correspond to a recorded run,
+    the fix is to delete the SQLite file and replay the record over it.
+
+    Note what is *not* preserved — trackio stamps its own creation time, so replayed
+    runs are all dated now. The real timings live in the record's `recorded_at` and
+    `seconds`, which is where they belong.
+    """
+    try:
+        import trackio  # noqa: F401
+    except ImportError:
+        return 0
+    count = 0
+    for record in records:
+        track(record)
+        count += 1
+    return count
