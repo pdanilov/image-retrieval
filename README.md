@@ -80,7 +80,7 @@ plateaued: every technique was still climbing at the largest `k` tried.
 Caveats: single seed, so small gaps are unresolved; roxford5k only, so the ranking is not
 cross-checked on rparis6k; Fisher's GMM is fitted on a seeded 1M-descriptor subsample.
 
-`notebooks/classic_comparison.ipynb` plots all of this from `results/runs.jsonl`. Run it
+`notebooks/02_classic_comparison.ipynb` plots all of this from `results/runs.jsonl`. Run it
 top to bottom — it ships with outputs stripped.
 
 For a browsable dashboard instead, install the optional extra and mirror the record:
