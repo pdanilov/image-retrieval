@@ -65,17 +65,35 @@ only.
 | VLAD | 128 | 16384 | 22.4 | 10.0 |
 | VLAD | 256 | 32768 | 26.9 | 13.4 |
 | VLAD | 512 | 65536 | 29.5 | 13.7 |
-| **VLAD** | **1024** | **131072** | **33.1** | **16.2** |
+| VLAD | 1024 | 131072 | 33.1 | 16.2 |
+| VLAD | 2048 | 262144 | 36.5 | 19.0 |
+| **VLAD** | **4096** | **524288** | **38.5** | **19.5** |
 
 **Validation.** Radenović et al. report `HesAff–rSIFT–VLAD` at Medium 33.9 / Hard 13.2 on
 this benchmark ([1803.11285](https://arxiv.org/abs/1803.11285), Table 5). VLAD k=1024
 here reaches 33.1 / 16.2 — with OpenCV DoG SIFT rather than Hessian-Affine, no
 PCA-whitening, and a vocabulary trained on rparis6k rather than a separate landmark set.
-Reproducing the reference number is what licenses trusting the rest of the table.
+Landing on a published number is what licenses trusting the rest of the table; the larger
+`k` above it then exceed that reference.
 
 At matched dimensionality the ordering is **VLAD ≥ Fisher > BoW** at every point. Fisher
-looks stronger at equal `k` only because its vector is twice as long there. No curve has
-plateaued: every technique was still climbing at the largest `k` tried.
+looks stronger at equal `k` only because its vector is twice as long there.
+
+**VLAD may be levelling off near k=4096, but this is not established.** Its Medium
+increments per doubling run +1.9, +2.5, +2.6, +4.6, +2.5, +3.7, +3.4, +1.9 and Hard's run
++1.4, +2.4, +2.0, +3.4, +0.3, +2.5, +2.7, +0.5. The final doubling is the smallest for
+both — but Hard already dropped to +0.3 at k=512 and then resumed at +2.5 and +2.7, so a
+single small increment has misled here before. Treat k=4096 as the point where returns
+stop justifying the cost (twice the storage, 5.2 → 10.5 GB for the database matrix, for
+under two points) rather than as a demonstrated ceiling. Confirming a real plateau needs
+k=8192, which this setup cannot reach.
+
+BoW and Fisher were not pushed anywhere near their knees; both were still climbing where
+they stop above, so their last rows are budget limits, not ceilings.
+
+k=8192 is out of reach here, and RAM is not the reason: `exact_search` moves the database
+matrix to the GPU, and 21 GB does not fit in 15.9 GB of VRAM. Going further needs a
+chunked search, not a bigger machine.
 
 Caveats: single seed, so small gaps are unresolved; roxford5k only, so the ranking is not
 cross-checked on rparis6k; Fisher's GMM is fitted on a seeded 1M-descriptor subsample.
@@ -100,9 +118,14 @@ scratch at any time.
 
 ```
 uv run cbir evaluate --dataset roxford5k --sweep-k 1000 5000 20000 50000 bow    --seed 0
-uv run cbir evaluate --dataset roxford5k --sweep-k 16 32 64 128 256 512 1024 vlad --seed 0
+uv run cbir evaluate --dataset roxford5k --sweep-k 16 32 64 128 256 512 1024 2048 4096 vlad --seed 0
 uv run cbir evaluate --dataset roxford5k --sweep-k 16 64 128 256 fisher --seed 0
 ```
 
-Roughly 9 hours cold on 16 cores, most of it BoW's k-means at k=20000 and k=50000. VLAD
-is ~13–18 min per point at any `k` — its cost is loading descriptors, not clustering.
+Roughly 10 hours cold on 16 cores, most of it BoW's k-means at k=20000 and k=50000. VLAD
+is 12–31 min per point — below k≈1024 its cost is loading descriptors rather than
+clustering, so small `k` is nearly free once the sweep is running.
+
+VLAD at k=4096 needs more than 48 GB of RAM: `encode` holds about three copies of the
+10.5 GB database matrix while the ~20 GB of RootSIFT descriptors are still resident. It
+was run with WSL at 64 GB. Below k=2048 the default 48 GB is fine.
