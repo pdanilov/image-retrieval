@@ -10,8 +10,18 @@ requires-python = ">=3.13"
 dependencies = [
     "aiohttp>=3.14.2",
     "datasets<4.0",
+    "numpy>=2.5.1",
+    "opencv-python-headless>=4.10",
+    "pillow>=12.3.0",
+    "scikit-learn>=1.9.0",
+    "torch>=2.7.0",
     "tyro>=1.0.15",
 ]
+
+[project.optional-dependencies]
+# Optional on purpose: `cbir.eval.tracking` imports trackio defensively, so evaluation
+# and `results/runs.jsonl` work without it. Install with `uv sync --extra tracking`.
+tracking = ["trackio>=0.34"]
 
 [project.scripts]
 cbir = "cbir.cli:main"
@@ -20,13 +30,27 @@ cbir = "cbir.cli:main"
 requires = ["uv_build>=0.10.0,<0.11.0"]
 build-backend = "uv_build"
 
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu128" }]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
 [dependency-groups]
 dev = [
     "ipykernel>=7.3.0",
     "jupyter>=1.1.1",
     "matplotlib>=3.11.1",
-    "numpy>=2.5.1",
-    "pillow>=12.3.0",
+    # Strips notebook outputs before they reach git; wired up in .pre-commit-config.yaml
+    # as a `language: system` hook so it runs from this venv rather than one pre-commit
+    # builds itself -- that isolated install stalled and blocked commits.
+    "nbstripout>=0.9.1",
+    # The comparison notebook imports pandas directly. It resolves today only because
+    # `datasets` happens to depend on it -- declared here so the notebook doesn't break
+    # the day that transitive dependency changes.
+    "pandas>=2.2",
     "pre-commit>=4.6.1",
     "pytest>=9.1.1",
     "ruff>=0.15.22",
@@ -38,7 +62,12 @@ line-length = 120
 extend-exclude = ["*.ipynb"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B"]
+select = ["E", "F", "I", "UP", "B", "C4", "SIM", "RUF", "PTH", "N"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The tests tree mirrors src/cbir/, so basenames repeat across directories
+# (descriptors/classic/test_rootsift.py vs descriptors/classic/cache/test_rootsift.py).
+# importlib mode imports each by full path instead of by basename, which keeps those
+# distinct without scattering __init__.py files through the test tree.
+addopts = ["--import-mode=importlib"]

@@ -17,3 +17,21 @@ repos:
       - id: ruff-check
         args: ["--fix"]
       - id: ruff-format
+
+  # Strip notebook outputs before they reach git. Figures are base64 PNGs: re-running
+  # unchanged code produces a completely different blob, so diffs become meaningless,
+  # every version is stored in history forever, and two people running the same
+  # notebook conflict unresolvably. check-added-large-files (5 MB) would admit them a
+  # chart at a time.
+  #
+  # `language: system` runs the nbstripout from this project's venv (it is in the dev
+  # group). The upstream nbstripout hook was tried first and pre-commit's isolated
+  # environment build for it stalled, blocking commits entirely -- a hook that cannot
+  # install is worse than the problem it solves, so this avoids the isolation.
+  - repo: local
+    hooks:
+      - id: nbstripout
+        name: nbstripout
+        entry: uv run nbstripout
+        language: system
+        types: [jupyter]

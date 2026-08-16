@@ -49,10 +49,10 @@ src/cbir/
     cnn/         Neural Codes; GeM (⊃ SPoC, MAC), R-MAC, whitening
     foundation/  DINOv2/DINOv3, CLIP, SigLIP global descriptors
   search/        exact torch matmul search (no ANN — see Search backend)
-  eval/          mAP / mP@k, the three protocols, results serialization
-  cli.py         entry point: extract / index / search / evaluate
+  eval/          mAP / mP@k, the three protocols, the run pipeline, results serialization
+  cli.py         entry point: download / evaluate / results
 notebooks/       analysis and figures ONLY — no pipeline logic
-results/         committed JSON/CSV run outputs
+results/         committed JSONL run outputs (append-only, one run per line)
 tests/
 data/            gitignored: cached descriptors (NOT raw dataset archives — see below)
 ```
@@ -327,12 +327,30 @@ matter and needs its own justification.
   Every knob that affects a number lives in a typed dataclass in `src/cbir/configs/`,
   not in a bare Python default or a notebook cell, so it shows up in `--help` and in
   the run's recorded config.
-- **Weights & Biases** for run tracking. Requires `WANDB_API_KEY` in the environment;
-  never commit it. Support `WANDB_MODE=offline` and make sure the pipeline runs
-  end-to-end without a W&B account — tracking is an observer, not a dependency.
-- Every evaluation also writes a **local JSON to `results/`** containing the metrics,
-  the resolved config, and the git commit. These are committed. W&B is convenience;
-  `results/` is the record.
+- **trackio** for run tracking, as an optional dependency. Import it defensively
+  (`try: import trackio / except ImportError: return`) so a machine without it still
+  evaluates — tracking is an observer, not a dependency. No account, key, or network is
+  needed: it writes one SQLite file per project and is queryable from the terminal
+  (`trackio list runs`, `trackio query project --sql ...`, `trackio show` for a
+  dashboard, `trackio sync` to publish to a Hugging Face Space if ever wanted).
+- Leave trackio's storage at its default `~/.cache/huggingface/trackio/`, for the same
+  reason the benchmark archives live in the user-wide HF cache: it is local scratch, and
+  a SQLite binary would not diff usefully in git. `TRACKIO_DIR` can relocate it, but
+  do not point it into this repo.
+- Not W&B, which an earlier version of this file specified. It needs an account and a
+  secret, and its comparison story is the web UI, while this project is evaluation-only
+  — every run is a dozen terminal-state scalars, never a training curve. Not DVCLive
+  either: its experiments are git refs scoped to the commit they ran from, which plain
+  `git push` silently drops and which vanish from `dvc exp show` after the next commit.
+  Revisit if fine-tuning ever enters scope, since that is when curves start to matter.
+- Every evaluation also appends a row to **`results/runs.jsonl`** containing the metrics,
+  the resolved config, and the git commit. One JSON object per line, append-only: a run
+  never rewrites an earlier row, so diffs are always new lines, two runs cannot conflict,
+  and re-running a configuration records a *second* row rather than overwriting the
+  first. That history is the point — when a number moves, the pair of rows and their
+  commit hashes say when it moved and what changed, which a file holding only current
+  values cannot answer. These are committed, and `cbir results` reads them back.
+  trackio is convenience; `results/` is the record.
 - Descriptor extraction is the expensive step. Cache descriptors to `data/` keyed by
   (dataset, descriptor config), and make the cache key include everything that changes
   the output. A stale cache silently invalidates results.
@@ -346,6 +364,9 @@ matter and needs its own justification.
 - Tests: the evaluation code gets real unit tests with hand-computed expected values —
   a known ranking with a known mAP. This is the part that must not be silently wrong.
 - Never commit images, descriptors, or indexes. `data/` stays gitignored.
+- Don't reference `AGENTS.md` by name in docstrings — a docstring should explain the
+  code on its own terms, not point at a governance file that can move or change
+  wording. Put "why" context directly in the docstring instead.
 
 ## Working agreements
 
