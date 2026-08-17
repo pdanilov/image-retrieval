@@ -25,13 +25,15 @@ class NeuralCodesConfig:
 
     Args:
         backbone: Which frozen ImageNet network supplies `fc6`.
-        dim: PCA output dimensionality, or `None` to report the raw 4096-D code. The
-            PCA is fitted on the held-out dataset, never on the eval database.
+        dim: PCA output dimensionality. The compression is part of the method, not an
+            option on top of it — the paper's claim is that a 4096-D code survives it —
+            so the default is a compressed width and `None` is the *ablation*, giving
+            the raw 4096-D code. Fitted on the held-out dataset, never the eval database.
         seed: Seeds PCA's randomized solver, so a refit reproduces.
     """
 
     backbone: Backbone = "alexnet"
-    dim: int | None = None
+    dim: int | None = 256
     seed: int = 0
 
     technique: ClassVar[str] = "neural_codes"

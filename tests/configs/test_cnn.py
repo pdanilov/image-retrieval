@@ -97,6 +97,13 @@ def test_inputs_kind_separates_this_tier_from_the_classic_one():
     assert NeuralCodesConfig.inputs_kind == "images"
 
 
+def test_the_default_is_the_published_method_not_the_ablation():
+    # Neural Codes is L2 -> PCA -> L2. A default of `None` would make the bare
+    # `cbir evaluate neural-codes` report the uncompressed ablation under the method's
+    # name -- which is exactly what happened once.
+    assert NeuralCodesConfig().dim == 256
+
+
 def test_descriptor_dim_reports_the_encoded_width():
     assert descriptor_dim(NeuralCodesConfig(dim=None)) == DIM
     assert descriptor_dim(NeuralCodesConfig(dim=128)) == 128
