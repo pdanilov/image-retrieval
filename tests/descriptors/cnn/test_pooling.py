@@ -3,7 +3,7 @@ import pytest
 import torch
 from PIL import Image
 
-from cbir.descriptors.cnn.pooling import CHANNELS, MULTI_SCALE, PooledCNN
+from cbir.descriptors.cnn.pooling import CHANNELS, MIN_SIDE, MULTI_SCALE, PooledCNN
 
 
 @pytest.fixture(scope="module")
@@ -93,6 +93,29 @@ def test_scale_composes_with_the_cap(model):
     # huge image at scale 1/2 is half of max_side, not half of its original size.
     tensor = model.preprocess(Image.new("RGB", (4096, 2048)), scale=0.5)
     assert tensor.shape[-2:] == (256, 512)
+
+
+def test_scale_does_not_shrink_below_what_the_backbone_accepts(model):
+    # A narrow query crop at scale 1/2 goes under AlexNet's 63-px floor and the forward
+    # pass raises inside a max-pool. The floor keeps the aspect ratio and lifts both
+    # sides together rather than padding.
+    tensor = model.preprocess(Image.new("RGB", (131, 90)), scale=0.5)
+    assert min(tensor.shape[-2:]) == MIN_SIDE["alexnet"]
+    assert tensor.shape[-2:] == (63, 92)  # 131/90 preserved
+
+
+def test_a_narrow_crop_survives_every_published_scale():
+    # The actual crash: this ran fine single-scale, so nothing caught it until a
+    # fractional scale was requested.
+    multi = PooledCNN("alexnet", p=None, scales=MULTI_SCALE, device="cpu")
+    assert multi.extract([Image.new("RGB", (131, 40), "gray")]).shape == (1, CHANNELS["alexnet"])
+
+
+def test_the_floor_leaves_full_scale_alone(model):
+    # It must only ever trigger below scale 1, or the single-scale rows already in
+    # runs.jsonl would stop reproducing.
+    tensor = model.preprocess(Image.new("RGB", (131, 90)))
+    assert tensor.shape[-2:] == (90, 131)
 
 
 def test_multi_scale_descriptor_keeps_the_native_width(model):

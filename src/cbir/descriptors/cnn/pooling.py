@@ -47,6 +47,13 @@ exact zero raised to a fractional power has an infinite gradient and yields NaN 
 MULTI_SCALE: tuple[float, ...] = (1.0, 2**-0.5, 0.5)
 """The scale set the off-the-shelf CNN baselines are published at: full, 1/sqrt(2), 1/2."""
 
+MIN_SIDE: dict[str, int] = {"alexnet": 63, "vgg16": 32, "resnet101": 32}
+"""Smallest input each conv stack accepts, below which its own pooling layers raise.
+
+Measured, not assumed: AlexNet's stride-4 first conv plus three max-pools exhaust a
+62-px side. Query crops here go down to 131 px on the long side and are far narrower on
+the short one, so a 1/2-scale pass lands underneath this without a floor."""
+
 
 class PooledCNN:
     """A frozen backbone truncated to its conv stack, plus a pooling exponent."""
@@ -91,10 +98,16 @@ class PooledCNN:
     def preprocess(self, image: PILImage, scale: float = 1.0) -> torch.Tensor:
         """Normalized `(1, 3, h, w)` tensor, aspect ratio preserved.
 
-        Caps the longest side at `max_side` and never enlarges past it. Upscaling adds
-        no information, and query crops here go down to 131 px — interpolating one 8x
-        would only cost compute. A conv stack accepts whatever size it is given, so
-        unlike `neural_codes.py` there is nothing forcing a fixed resolution.
+        Caps the longest side at `max_side` and does not enlarge to reach it. Upscaling
+        adds no information, and query crops here go down to 131 px — interpolating one
+        8x would only cost compute.
+
+        The one exception is `MIN_SIDE`: a conv stack accepts almost any size, but not
+        any size. A narrow crop at scale 1/2 lands under what the pooling layers can
+        consume and the forward pass raises, so the shorter side is floored there. That
+        only ever triggers below full scale — an image that failed the floor at scale 1
+        would have raised in the single-scale runs already recorded, so those still
+        reproduce exactly.
 
         `scale` multiplies the capped size, which is how multi-scale extraction asks
         for the same image at a lower resolution.
@@ -103,6 +116,8 @@ class PooledCNN:
 
         image = image.convert("RGB")
         factor = min(1.0, self.max_side / max(image.size)) * scale
+        floor = MIN_SIDE[self.backbone] / min(image.size)
+        factor = max(factor, floor)
         if factor != 1.0:
             image = image.resize((max(1, round(image.width * factor)), max(1, round(image.height * factor))))
         tensor = tv.normalize(tv.to_tensor(image), mean=IMAGENET_MEAN, std=IMAGENET_STD)
