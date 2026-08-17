@@ -15,7 +15,10 @@ from cbir.data.crop import crop_query
 from cbir.data.holdout import EvalDataset
 from cbir.data.images import iter_images
 from cbir.descriptors.cnn.compression import PCACompression
+from cbir.descriptors.cnn.neural_codes import DIM as NEURAL_CODES_DIM
 from cbir.descriptors.cnn.neural_codes import Backbone, NeuralCodes
+from cbir.descriptors.cnn.pooling import CHANNELS, PooledCNN
+from cbir.descriptors.cnn.pooling import Backbone as PoolBackbone
 from cbir.descriptors.cnn.prepare import EvalImages, prepare_image_inputs
 
 
@@ -65,16 +68,73 @@ class NeuralCodesConfig:
         return pca.transform(database_vectors), pca.transform(query_vectors)
 
 
-CNNConfig = NeuralCodesConfig
-"""Union of this tier's configs. A single member today; the pooling family joins it.
+@dataclass(frozen=True)
+class PooledConfig:
+    """Pooled conv-map descriptors: SPoC, MAC and GeM as one parameterized method.
 
-Kept as a named alias so `configs/run.py` composes tiers rather than techniques, and
-adding GeM means changing this line rather than every place a union is spelled out.
-"""
+    `technique` is `"gem"` for all of them because they *are* one method — the
+    generalized mean — and `p` is what names the variant in the literature. A row with
+    `p=1.0` is SPoC and `p=None` is MAC; both are recorded as `gem` plus their `p`,
+    which is what keeps them comparable in one table instead of split across three.
+
+    Args:
+        backbone: Frozen ImageNet network whose last conv map is pooled.
+        p: Generalized-mean exponent. `1.0` = SPoC (average), `None` = MAC (max),
+            `3.0` = the GeM default from Radenović et al.
+        max_side: Longest image side fed to the network. Caps only, never enlarges.
+        dim: PCA width, fitted on the held-out set. `None` keeps the backbone's
+            native width, which is already compact — with `whiten` on that still means
+            a PCA is fitted, at full width, since whitening is a rotation and rescale
+            rather than a compression.
+        whiten: Divide each PCA direction by its standard deviation. Radenović et al.
+            call this "essential" for off-the-shelf CNN descriptors and apply it to
+            every such row they publish, so their numbers are not comparable without
+            it. Off by default so that a run says which it was.
+        seed: Seeds PCA's randomized solver.
+    """
+
+    backbone: PoolBackbone = "alexnet"
+    p: float | None = 3.0
+    max_side: int = 1024
+    dim: int | None = None
+    whiten: bool = False
+    seed: int = 0
+
+    technique: ClassVar[str] = "gem"
+    inputs_kind: ClassVar[str] = "images"
+
+    def prepare(self, dataset: EvalDataset) -> EvalImages:
+        return prepare_image_inputs(dataset)
+
+    def train_and_encode(self, inputs: EvalImages) -> Encoded:
+        model = PooledCNN(self.backbone, p=self.p, max_side=self.max_side)
+
+        database_vectors = model.extract(iter_images(inputs.database_paths))
+        cropped = (
+            crop_query(image, box)
+            for image, box in zip(iter_images(inputs.query_paths), inputs.query_boxes, strict=True)
+        )
+        query_vectors = model.extract(cropped)
+
+        if self.dim is None and not self.whiten:
+            return database_vectors, query_vectors
+
+        held_out = model.extract(iter_images(inputs.held_out_paths))
+        # Whitening with no explicit width still needs a PCA, fitted at the backbone's
+        # full descriptor size: it rescales the axes without discarding any.
+        width = self.dim if self.dim is not None else CHANNELS[self.backbone]
+        pca = PCACompression.fit(held_out, dim=width, whiten=self.whiten, seed=self.seed)
+        return pca.transform(database_vectors), pca.transform(query_vectors)
 
 
-def descriptor_dim(config: NeuralCodesConfig) -> int:
-    """Encoded vector length — 4096 uncompressed, otherwise the PCA output size."""
-    from cbir.descriptors.cnn.neural_codes import DIM
+CNNConfig = NeuralCodesConfig | PooledConfig
+"""Union of this tier's configs, composed by `configs/run.py`."""
 
-    return DIM if config.dim is None else config.dim
+
+def descriptor_dim(config: CNNConfig) -> int:
+    """Encoded vector length: the PCA width if set, else the descriptor's native size."""
+    if config.dim is not None:
+        return config.dim
+    if isinstance(config, NeuralCodesConfig):
+        return NEURAL_CODES_DIM
+    return CHANNELS[config.backbone]

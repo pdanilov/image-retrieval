@@ -71,3 +71,38 @@ def test_more_components_than_samples_is_rejected():
     # is the problem.
     with pytest.raises(ValueError, match="cannot fit"):
         PCACompression.fit(_descriptors(n=4, d=32), dim=10)
+
+
+def test_whitening_equalizes_component_variance():
+    # The point of whitening: without it the first few directions dominate every
+    # similarity. With it, each retained direction contributes equally.
+    rng = np.random.default_rng(0)
+    scales = np.array([50.0, 5.0, 0.5, 0.05], dtype=np.float32)
+    data = rng.normal(size=(500, 4)).astype(np.float32) * scales
+
+    plain = PCACompression.fit(data, dim=4, whiten=False)
+    white = PCACompression.fit(data, dim=4, whiten=True)
+
+    # Compare before the trailing L2, which would hide the effect.
+    projected_plain = (data - plain.mean) @ plain.components.T
+    projected_white = (data - white.mean) @ white.components.T
+
+    assert projected_plain.std(axis=0).max() / projected_plain.std(axis=0).min() > 100
+    assert projected_white.std(axis=0).max() / projected_white.std(axis=0).min() == pytest.approx(1.0, abs=0.1)
+
+
+def test_whitening_is_off_by_default():
+    # Never implied: Neural Codes is plain compression, and a silently whitened run
+    # would report one method's number under another's name.
+    data = _descriptors()
+    default = PCACompression.fit(data, dim=8)
+    explicit = PCACompression.fit(data, dim=8, whiten=False)
+    np.testing.assert_allclose(default.transform(data), explicit.transform(data))
+
+
+def test_whitening_survives_a_zero_variance_direction():
+    # A rank-deficient held-out set yields components with no variance; dividing by
+    # their standard deviation would produce NaN rather than raising.
+    data = _descriptors(n=100, d=16, rank=3)
+    out = PCACompression.fit(data, dim=8, whiten=True).transform(data)
+    assert np.isfinite(out).all()

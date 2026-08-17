@@ -107,3 +107,66 @@ def test_the_default_is_the_published_method_not_the_ablation():
 def test_descriptor_dim_reports_the_encoded_width():
     assert descriptor_dim(NeuralCodesConfig(dim=None)) == DIM
     assert descriptor_dim(NeuralCodesConfig(dim=128)) == 128
+
+
+def _pooled_wired(monkeypatch):
+    from cbir.descriptors.cnn.pooling import CHANNELS
+
+    class _Pooled:
+        def __init__(self, *a, **k):
+            self.calls = []
+
+        def extract(self, images):
+            images = list(images)
+            self.calls.append(len(images))
+            rng = np.random.default_rng(len(images))
+            out = rng.normal(size=(len(images), CHANNELS["alexnet"])).astype(np.float32)
+            return out / np.linalg.norm(out, axis=1, keepdims=True)
+
+    model = _Pooled()
+    monkeypatch.setattr(cnn_config, "PooledCNN", lambda *a, **k: model)
+    monkeypatch.setattr(cnn_config, "iter_images", lambda paths: list(paths))
+    monkeypatch.setattr(cnn_config, "crop_query", lambda image, box: image)
+    return model
+
+
+def test_pooled_without_pca_or_whitening_skips_the_held_out_pass(monkeypatch, wired):
+    from cbir.configs.cnn import PooledConfig
+
+    model = _pooled_wired(monkeypatch)
+    _, inputs = wired
+
+    PooledConfig(dim=None, whiten=False).train_and_encode(inputs)
+
+    assert model.calls == [6, 2]  # no held-out extraction at all
+
+
+def test_whitening_without_a_width_fits_pca_at_the_native_size(monkeypatch, wired):
+    # Whitening is a rotation and rescale, not a compression -- asking for it alone
+    # must keep all 256 dimensions rather than silently reducing.
+    from cbir.configs.cnn import PooledConfig
+    from cbir.descriptors.cnn.pooling import CHANNELS
+
+    model = _pooled_wired(monkeypatch)
+    _, base = wired
+    # PCA at the native 256 needs at least 256 held-out samples. The real pool is 6322
+    # images, so this only matters for the fixture -- but it is why `dim` cannot exceed
+    # the held-out size, which compression.py rejects explicitly.
+    inputs = EvalImages(
+        held_out_paths=[f"h{i}" for i in range(300)],
+        database_paths=base.database_paths,
+        query_paths=base.query_paths,
+        query_boxes=base.query_boxes,
+    )
+
+    database, _ = PooledConfig(dim=None, whiten=True).train_and_encode(inputs)
+
+    assert database.shape[1] == CHANNELS["alexnet"]
+    assert model.calls == [6, 2, 300]  # held-out pass now happens
+
+
+def test_whiten_is_recorded_so_two_runs_are_distinguishable():
+    from cbir.configs.cnn import PooledConfig
+
+    assert descriptor_params(PooledConfig(whiten=True))["whiten"] is True
+    assert descriptor_params(PooledConfig())["whiten"] is False
