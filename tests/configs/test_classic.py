@@ -1,7 +1,8 @@
 import numpy as np
 import pytest
 
-from cbir.configs.classic import BoWConfig, FisherConfig, RunConfig, VLADConfig, descriptor_params
+from cbir.configs.classic import BoWConfig, FisherConfig, VLADConfig
+from cbir.configs.run import RunConfig, descriptor_params
 from cbir.descriptors.classic.prepare import ClassicDescriptorInputs
 
 # Three well-separated clusters in 2-D, so k-means/GMM at k=3 converge to something

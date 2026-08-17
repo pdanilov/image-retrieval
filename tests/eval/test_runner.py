@@ -3,7 +3,8 @@ import pytest
 
 import cbir.eval.results as results_module
 import cbir.eval.runner as runner_module
-from cbir.configs.classic import BoWConfig, RunConfig, VLADConfig
+from cbir.configs.classic import BoWConfig, VLADConfig
+from cbir.configs.run import RunConfig
 from cbir.descriptors.classic.prepare import ClassicDescriptorInputs
 from cbir.eval.results import load
 from cbir.eval.runner import ground_truth, run, run_all

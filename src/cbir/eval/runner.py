@@ -19,7 +19,7 @@ from typing import Any
 
 from datasets import Dataset
 
-from cbir.configs.classic import RunConfig, descriptor_params
+from cbir.configs.run import RunConfig, descriptor_params
 from cbir.data.holdout import HeldOutSplit
 from cbir.data.revisitop import download
 from cbir.eval.metrics import Protocol, QueryGroundTruth, evaluate
