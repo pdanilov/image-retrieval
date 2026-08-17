@@ -3,7 +3,7 @@ import pytest
 import torch
 from PIL import Image
 
-from cbir.descriptors.cnn.pooling import CHANNELS, PooledCNN
+from cbir.descriptors.cnn.pooling import CHANNELS, MULTI_SCALE, PooledCNN
 
 
 @pytest.fixture(scope="module")
@@ -77,6 +77,72 @@ def test_descriptor_is_far_smaller_than_a_neural_code(model):
 
 def test_extract_of_nothing_is_empty(model):
     assert model.extract([]).shape == (0, CHANNELS["alexnet"])
+
+
+def test_multi_scale_is_off_by_default(model):
+    assert model.scales == (1.0,)
+
+
+def test_scale_shrinks_the_input_below_the_cap(model):
+    tensor = model.preprocess(Image.new("RGB", (400, 200)), scale=0.5)
+    assert tensor.shape[-2:] == (100, 200)
+
+
+def test_scale_composes_with_the_cap(model):
+    # The cap applies first, then the scale factor multiplies what survived it -- so a
+    # huge image at scale 1/2 is half of max_side, not half of its original size.
+    tensor = model.preprocess(Image.new("RGB", (4096, 2048)), scale=0.5)
+    assert tensor.shape[-2:] == (256, 512)
+
+
+def test_multi_scale_descriptor_keeps_the_native_width(model):
+    # Averaging across scales, not concatenating: three passes still yield one C-vector,
+    # so a multi-scale row stays comparable with a single-scale one at the same width.
+    multi = PooledCNN("alexnet", p=3.0, scales=MULTI_SCALE, device="cpu")
+    out = multi.extract([Image.new("RGB", (300, 200), "gray")])
+
+    assert out.shape == (1, CHANNELS["alexnet"])
+    assert np.linalg.norm(out, axis=1) == pytest.approx(1.0, abs=1e-5)
+
+
+def test_single_scale_multi_scale_agrees_with_plain_extraction(model):
+    # scales=(1.0,) must be exactly the old path, or every descriptor already recorded
+    # would silently stop being reproducible.
+    image = Image.new("RGB", (200, 150))
+    image.putpixel((10, 10), (255, 0, 0))
+    explicit = PooledCNN("alexnet", p=3.0, scales=(1.0,), device="cpu")
+    np.testing.assert_allclose(model.extract([image]), explicit.extract([image]), atol=1e-6)
+
+
+def test_multi_scale_changes_the_descriptor(model):
+    # Guards the wiring: if `scales` were accepted but ignored, every test above would
+    # still pass while the run reported single-scale numbers under a multi-scale name.
+    rng = np.random.default_rng(0)
+    image = Image.fromarray(rng.integers(0, 255, (150, 200, 3), dtype=np.uint8))
+    multi = PooledCNN("alexnet", p=3.0, scales=MULTI_SCALE, device="cpu")
+
+    similarity = float((model.extract([image]) @ multi.extract([image]).T).item())
+    assert similarity < 0.999
+
+
+def test_scales_are_l2_normalized_before_averaging(monkeypatch, model):
+    # Otherwise the full-resolution pass dominates: it pools over the most positions,
+    # so its raw magnitude is the largest and the "average" is it plus a nudge.
+    vectors = iter([np.array([[3.0, 0.0]], np.float32), np.array([[0.0, 1.0]], np.float32)])
+    two = PooledCNN.__new__(PooledCNN)
+    two.scales, two.device = (1.0, 0.5), "cpu"
+    two._model = lambda tensor: tensor
+    two.max_side, two.p, two.backbone = 1024, 3.0, "alexnet"
+    monkeypatch.setattr(two, "pool", lambda features: torch.from_numpy(next(vectors)))
+
+    # Equal weight after normalization -> the mean of two unit vectors, not 3:1.
+    np.testing.assert_allclose(two.describe(Image.new("RGB", (8, 8))), [[0.5, 0.5]], atol=1e-6)
+
+
+@pytest.mark.parametrize("scales", [(), (1.0, 0.0), (1.0, -0.5)])
+def test_impossible_scale_sets_are_rejected(scales):
+    with pytest.raises(ValueError, match="scales must"):
+        PooledCNN("alexnet", scales=scales, device="cpu")
 
 
 def test_unknown_backbone_is_rejected():

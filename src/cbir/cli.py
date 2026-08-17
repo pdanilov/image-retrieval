@@ -13,7 +13,7 @@ from cbir.configs.run import DescriptorConfig, RunConfig
 from cbir.data.holdout import EvalDataset
 from cbir.data.revisitop import SUPPORTED, download
 from cbir.eval.metrics import Protocol
-from cbir.eval.results import RunRecord, latest, load
+from cbir.eval.results import RunRecord, format_param, latest, load
 
 PROTOCOLS: tuple[Protocol, ...] = ("easy", "medium", "hard")
 
@@ -45,7 +45,7 @@ def download_cmd(
 
 def _format_params(params: dict[str, object]) -> str:
     """`{"k": 5000, "seed": 0}` -> `k=5000 seed=0`, sorted so columns line up."""
-    return " ".join(f"{key}={value}" for key, value in sorted(params.items()))
+    return " ".join(f"{key}={format_param(value)}" for key, value in sorted(params.items()))
 
 
 def _render(rows: list[list[str]], headers: list[str]) -> str:

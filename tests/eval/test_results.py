@@ -4,7 +4,7 @@ import pytest
 
 import cbir.eval.results as results_module
 from cbir.eval.metrics import EvalResult
-from cbir.eval.results import RunRecord, append, iter_rows, latest, load
+from cbir.eval.results import RunRecord, append, format_param, iter_rows, latest, load
 
 
 @pytest.fixture
@@ -131,3 +131,22 @@ def test_iter_rows_tolerates_fields_this_version_does_not_know(runs_path):
 
     with pytest.raises(TypeError):
         load(runs_path)
+
+
+def test_format_param_leaves_scalars_alone():
+    assert format_param(5000) == "5000"
+    assert format_param(None) == "None"
+    assert format_param("alexnet") == "alexnet"
+
+
+def test_format_param_flattens_a_sequence_without_spaces():
+    # The results table separates params with spaces and the trackio run name with
+    # dashes, so a tuple's default repr would split one param across several columns.
+    assert format_param((1.0, 2**-0.5, 0.5)) == "1|0.707107|0.5"
+
+
+def test_format_param_renders_a_json_round_trip_identically():
+    # json turns a tuple into a list; if the two rendered differently, a reloaded row
+    # would not visibly match the config that produced it.
+    scales = (1.0, 2**-0.5, 0.5)
+    assert format_param(json.loads(json.dumps(scales))) == format_param(scales)

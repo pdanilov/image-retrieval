@@ -82,6 +82,10 @@ class PooledConfig:
         p: Generalized-mean exponent. `1.0` = SPoC (average), `None` = MAC (max),
             `3.0` = the GeM default from Radenović et al.
         max_side: Longest image side fed to the network. Caps only, never enlarges.
+        scales: Input resolutions each image is described at, as factors of the capped
+            size; the per-scale descriptors are L2-normalized and averaged. The default
+            `(1.0,)` is single-scale — the published off-the-shelf rows use
+            `MULTI_SCALE`, `(1, 1/sqrt(2), 1/2)`, and cost one forward pass per scale.
         dim: PCA width, fitted on the held-out set. `None` keeps the backbone's
             native width, which is already compact — with `whiten` on that still means
             a PCA is fitted, at full width, since whitening is a rotation and rescale
@@ -96,6 +100,7 @@ class PooledConfig:
     backbone: PoolBackbone = "alexnet"
     p: float | None = 3.0
     max_side: int = 1024
+    scales: tuple[float, ...] = (1.0,)
     dim: int | None = None
     whiten: bool = False
     seed: int = 0
@@ -107,7 +112,7 @@ class PooledConfig:
         return prepare_image_inputs(dataset)
 
     def train_and_encode(self, inputs: EvalImages) -> Encoded:
-        model = PooledCNN(self.backbone, p=self.p, max_side=self.max_side)
+        model = PooledCNN(self.backbone, p=self.p, max_side=self.max_side, scales=self.scales)
 
         database_vectors = model.extract(iter_images(inputs.database_paths))
         cropped = (

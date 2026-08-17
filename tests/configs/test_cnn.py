@@ -170,3 +170,37 @@ def test_whiten_is_recorded_so_two_runs_are_distinguishable():
 
     assert descriptor_params(PooledConfig(whiten=True))["whiten"] is True
     assert descriptor_params(PooledConfig())["whiten"] is False
+
+
+def test_scales_are_recorded_so_two_runs_are_distinguishable():
+    from cbir.configs.cnn import PooledConfig
+    from cbir.descriptors.cnn.pooling import MULTI_SCALE
+
+    assert descriptor_params(PooledConfig())["scales"] == (1.0,)
+    assert descriptor_params(PooledConfig(scales=MULTI_SCALE))["scales"] == MULTI_SCALE
+
+
+def test_scales_reach_the_model(monkeypatch, wired):
+    # The config is the only place `scales` could be dropped without a test noticing:
+    # PooledCNN honours it, but a config that never passes it on would run
+    # single-scale and record `scales=MULTI_SCALE`.
+    from cbir.configs.cnn import PooledConfig
+    from cbir.descriptors.cnn.pooling import MULTI_SCALE
+
+    seen = {}
+
+    class _Recording:
+        def __init__(self, backbone, **kwargs):
+            seen.update(kwargs)
+
+        def extract(self, images):
+            return np.zeros((len(list(images)), 8), dtype=np.float32)
+
+    monkeypatch.setattr(cnn_config, "PooledCNN", _Recording)
+    monkeypatch.setattr(cnn_config, "iter_images", lambda paths: list(paths))
+    monkeypatch.setattr(cnn_config, "crop_query", lambda image, box: image)
+    _, inputs = wired
+
+    PooledConfig(scales=MULTI_SCALE).train_and_encode(inputs)
+
+    assert seen["scales"] == MULTI_SCALE
