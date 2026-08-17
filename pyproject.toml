@@ -15,6 +15,7 @@ dependencies = [
     "pillow>=12.3.0",
     "scikit-learn>=1.9.0",
     "torch>=2.7.0",
+    "torchvision>=0.26.0",
     "tyro>=1.0.15",
 ]
 
@@ -32,6 +33,10 @@ build-backend = "uv_build"
 
 [tool.uv.sources]
 torch = [{ index = "pytorch-cu128" }]
+# Pinned to the same index as torch. Resolving torchvision from PyPI instead pulls its
+# own CPU-only torch, which silently replaces the +cu128 build and moves every search
+# onto the CPU without failing anywhere visible.
+torchvision = [{ index = "pytorch-cu128" }]
 
 [[tool.uv.index]]
 name = "pytorch-cu128"

@@ -24,7 +24,7 @@ from cbir.data.holdout import EvalDataset
 from cbir.descriptors.classic.aggregate.bow import BagOfWords
 from cbir.descriptors.classic.aggregate.fisher import FisherVector
 from cbir.descriptors.classic.aggregate.vlad import VLAD
-from cbir.descriptors.classic.prepare import ClassicDescriptorInputs
+from cbir.descriptors.classic.prepare import ClassicDescriptorInputs, prepare_classic_inputs
 
 Encoded = tuple[np.ndarray, np.ndarray]
 """`(database_vectors, query_vectors)`, both `(N, D)` float32 and L2-normalized."""
@@ -45,6 +45,10 @@ class BoWConfig:
     seed: int = 0
 
     technique: ClassVar[str] = "bow"
+    inputs_kind: ClassVar[str] = "classic"
+
+    def prepare(self, dataset: EvalDataset) -> ClassicDescriptorInputs:
+        return prepare_classic_inputs(dataset)
 
     def train_and_encode(self, inputs: ClassicDescriptorInputs) -> Encoded:
         # `train_and_encode_database` rather than `train` + `encode`: idf is fitted on
@@ -72,6 +76,10 @@ class VLADConfig:
     power: float | None = None
 
     technique: ClassVar[str] = "vlad"
+    inputs_kind: ClassVar[str] = "classic"
+
+    def prepare(self, dataset: EvalDataset) -> ClassicDescriptorInputs:
+        return prepare_classic_inputs(dataset)
 
     def train_and_encode(self, inputs: ClassicDescriptorInputs) -> Encoded:
         # Two encode calls rather than one: VLAD has no corpus-level fit, so database
@@ -102,6 +110,10 @@ class FisherConfig:
     sample: int = 1_000_000
 
     technique: ClassVar[str] = "fisher"
+    inputs_kind: ClassVar[str] = "classic"
+
+    def prepare(self, dataset: EvalDataset) -> ClassicDescriptorInputs:
+        return prepare_classic_inputs(dataset)
 
     def train_and_encode(self, inputs: ClassicDescriptorInputs) -> Encoded:
         model = FisherVector.train(inputs, k=self.k, seed=self.seed, power=self.power, sample=self.sample)

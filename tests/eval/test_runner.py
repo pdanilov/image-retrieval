@@ -35,8 +35,17 @@ def wired(monkeypatch, tmp_path):
         database_descriptors=[np.zeros((1, 2), dtype=np.float32)] * 3,
         query_descriptors=[np.zeros((1, 2), dtype=np.float32)] * 2,
     )
+    # Patched on the config rather than the runner: preparation now belongs to the
+    # descriptor, which is what lets a CNN config ask for images instead of RootSIFT.
+    # Patching here exercises that dispatch instead of bypassing it.
     prepared = []
-    monkeypatch.setattr(runner_module, "prepare_classic_inputs", lambda dataset: (prepared.append(dataset), inputs)[1])
+
+    def fake_prepare(self, dataset):
+        prepared.append(dataset)
+        return inputs
+
+    for config_type in (BoWConfig, VLADConfig):
+        monkeypatch.setattr(config_type, "prepare", fake_prepare, raising=True)
 
     # Query 0 ranks the database 2 > 1 > 0, query 1 ranks it 0 > 1 > 2. The weights are
     # deliberately distinct rather than one-hot: with one-hot queries two of the three
@@ -207,3 +216,35 @@ def test_vlad_config_flows_through_unchanged(monkeypatch, wired):
 
     assert record.technique == "vlad"
     assert record.params == {"k": 64, "seed": 1, "intra_norm": False, "power": 0.5}
+
+
+def test_run_all_prepares_separately_per_inputs_kind(wired, monkeypatch):
+    # The classic tier wants RootSIFT arrays; the CNN tier wants images. Sharing keyed
+    # on dataset alone would hand one tier the other's inputs -- silently, since both
+    # arrive as an opaque `inputs` argument.
+    other_prepared = []
+
+    class _ImageConfig(BoWConfig):
+        technique = "stub-cnn"
+        inputs_kind = "images"
+
+        def prepare(self, dataset):
+            other_prepared.append(dataset)
+            return "images-for-" + dataset
+
+        def train_and_encode(self, inputs):
+            assert inputs == "images-for-roxford5k"  # never the classic descriptors
+            return np.eye(3, dtype=np.float32), np.eye(3, dtype=np.float32)[:2]
+
+    run_all(
+        [
+            RunConfig(descriptor=BoWConfig(k=3), dataset="roxford5k"),
+            RunConfig(descriptor=_ImageConfig(k=3), dataset="roxford5k"),
+            RunConfig(descriptor=BoWConfig(k=5), dataset="roxford5k"),
+        ]
+    )
+
+    # One classic preparation shared by both BoW runs, one image preparation for the
+    # other tier -- same dataset, two kinds, no cross-contamination.
+    assert wired["prepared"] == ["roxford5k"]
+    assert other_prepared == ["roxford5k"]
