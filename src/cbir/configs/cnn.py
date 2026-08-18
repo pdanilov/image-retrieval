@@ -20,6 +20,7 @@ from cbir.descriptors.cnn.neural_codes import Backbone, NeuralCodes
 from cbir.descriptors.cnn.pooling import CHANNELS, PooledCNN
 from cbir.descriptors.cnn.pooling import Backbone as PoolBackbone
 from cbir.descriptors.cnn.prepare import EvalImages, prepare_image_inputs
+from cbir.descriptors.cnn.rmac import RMAC
 
 
 @dataclass(frozen=True)
@@ -132,7 +133,62 @@ class PooledConfig:
         return pca.transform(database_vectors), pca.transform(query_vectors)
 
 
-CNNConfig = NeuralCodesConfig | PooledConfig
+@dataclass(frozen=True)
+class RMACConfig:
+    """Regional max-pooling (Tolias et al., ICLR 2016).
+
+    Separate from `PooledConfig` because R-MAC is not a point on the generalized-mean
+    axis: it changes what the max is taken over, not how activations are combined. It
+    therefore has no `p`, and a shared config would carry one that does nothing.
+
+    Args:
+        backbone: Frozen ImageNet network whose last conv map is pooled.
+        levels: Region grid depth. Level 1 is two large squares, each level after is
+            finer; 3 is the paper's setting.
+        max_side: Longest image side fed to the network. Caps only, never enlarges.
+        scales: Input resolutions, combined by averaging as the reference table
+            specifies for every method except GeM.
+        dim: PCA width, fitted on the held-out set. `None` keeps the native width.
+        whiten: PCA-whiten the finished descriptor. The paper whitens each region
+            vector instead, with a projection learned on a separate landmark set —
+            see `descriptors/cnn/rmac.py` for why that is not what happens here.
+        seed: Seeds PCA's randomized solver.
+    """
+
+    backbone: PoolBackbone = "alexnet"
+    levels: int = 3
+    max_side: int = 1024
+    scales: tuple[float, ...] = (1.0,)
+    dim: int | None = None
+    whiten: bool = False
+    seed: int = 0
+
+    technique: ClassVar[str] = "rmac"
+    inputs_kind: ClassVar[str] = "images"
+
+    def prepare(self, dataset: EvalDataset) -> EvalImages:
+        return prepare_image_inputs(dataset)
+
+    def train_and_encode(self, inputs: EvalImages) -> Encoded:
+        model = RMAC(self.backbone, levels=self.levels, max_side=self.max_side, scales=self.scales)
+
+        database_vectors = model.extract(iter_images(inputs.database_paths))
+        cropped = (
+            crop_query(image, box)
+            for image, box in zip(iter_images(inputs.query_paths), inputs.query_boxes, strict=True)
+        )
+        query_vectors = model.extract(cropped)
+
+        if self.dim is None and not self.whiten:
+            return database_vectors, query_vectors
+
+        held_out = model.extract(iter_images(inputs.held_out_paths))
+        width = self.dim if self.dim is not None else CHANNELS[self.backbone]
+        pca = PCACompression.fit(held_out, dim=width, whiten=self.whiten, seed=self.seed)
+        return pca.transform(database_vectors), pca.transform(query_vectors)
+
+
+CNNConfig = NeuralCodesConfig | PooledConfig | RMACConfig
 """Union of this tier's configs, composed by `configs/run.py`."""
 
 

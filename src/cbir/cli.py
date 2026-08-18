@@ -8,7 +8,7 @@ from typing import Annotated, Literal
 import tyro
 
 from cbir.configs.classic import BoWConfig, FisherConfig, VLADConfig
-from cbir.configs.cnn import NeuralCodesConfig, PooledConfig
+from cbir.configs.cnn import NeuralCodesConfig, PooledConfig, RMACConfig
 from cbir.configs.run import DescriptorConfig, RunConfig
 from cbir.data.holdout import EvalDataset
 from cbir.data.revisitop import SUPPORTED, download
@@ -22,7 +22,8 @@ Descriptor = Annotated[
     | Annotated[VLADConfig, tyro.conf.subcommand("vlad")]
     | Annotated[FisherConfig, tyro.conf.subcommand("fisher")]
     | Annotated[NeuralCodesConfig, tyro.conf.subcommand("neural-codes")]
-    | Annotated[PooledConfig, tyro.conf.subcommand("gem")],
+    | Annotated[PooledConfig, tyro.conf.subcommand("gem")]
+    | Annotated[RMACConfig, tyro.conf.subcommand("rmac")],
     # Named "" so the technique reads as a bare subcommand (`cbir evaluate bow --k 5000`)
     # rather than `descriptor:bo-w-config`, and each technique's --help lists only its
     # own knobs.
@@ -126,6 +127,7 @@ SWEEP_AXIS: dict[str, str] = {
     "fisher": "k",
     "neural_codes": "dim",
     "gem": "dim",
+    "rmac": "dim",
 }
 """The one field `--sweep` varies per technique — whatever costs something to change.
 
