@@ -95,6 +95,10 @@ class PooledConfig:
             call this "essential" for off-the-shelf CNN descriptors and apply it to
             every such row they publish, so their numbers are not comparable without
             it. Off by default so that a run says which it was.
+        shrinkage: Floors whitening's divisor at `sqrt(lambda + eps)`, `eps` being this
+            fraction of the mean eigenvalue. Only whitening reads it. Whitening is
+            unstable when the held-out set is not much larger than the descriptor width,
+            which is the regime every 2048-D backbone is in here.
         seed: Seeds PCA's randomized solver.
     """
 
@@ -104,6 +108,7 @@ class PooledConfig:
     scales: tuple[float, ...] = (1.0,)
     dim: int | None = None
     whiten: bool = False
+    shrinkage: float = 0.0
     seed: int = 0
 
     technique: ClassVar[str] = "gem"
@@ -129,7 +134,7 @@ class PooledConfig:
         # Whitening with no explicit width still needs a PCA, fitted at the backbone's
         # full descriptor size: it rescales the axes without discarding any.
         width = self.dim if self.dim is not None else CHANNELS[self.backbone]
-        pca = PCACompression.fit(held_out, dim=width, whiten=self.whiten, seed=self.seed)
+        pca = PCACompression.fit(held_out, dim=width, whiten=self.whiten, shrinkage=self.shrinkage, seed=self.seed)
         return pca.transform(database_vectors), pca.transform(query_vectors)
 
 
@@ -152,6 +157,10 @@ class RMACConfig:
         whiten: PCA-whiten the finished descriptor. The paper whitens each region
             vector instead, with a projection learned on a separate landmark set —
             see `descriptors/cnn/rmac.py` for why that is not what happens here.
+        shrinkage: Floors whitening's divisor at `sqrt(lambda + eps)`, `eps` being this
+            fraction of the mean eigenvalue. Only whitening reads it. Whitening is
+            unstable when the held-out set is not much larger than the descriptor width,
+            which is the regime every 2048-D backbone is in here.
         seed: Seeds PCA's randomized solver.
     """
 
@@ -161,6 +170,7 @@ class RMACConfig:
     scales: tuple[float, ...] = (1.0,)
     dim: int | None = None
     whiten: bool = False
+    shrinkage: float = 0.0
     seed: int = 0
 
     technique: ClassVar[str] = "rmac"
@@ -184,7 +194,7 @@ class RMACConfig:
 
         held_out = model.extract(iter_images(inputs.held_out_paths))
         width = self.dim if self.dim is not None else CHANNELS[self.backbone]
-        pca = PCACompression.fit(held_out, dim=width, whiten=self.whiten, seed=self.seed)
+        pca = PCACompression.fit(held_out, dim=width, whiten=self.whiten, shrinkage=self.shrinkage, seed=self.seed)
         return pca.transform(database_vectors), pca.transform(query_vectors)
 
 

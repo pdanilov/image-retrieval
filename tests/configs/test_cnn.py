@@ -204,3 +204,11 @@ def test_scales_reach_the_model(monkeypatch, wired):
     PooledConfig(scales=MULTI_SCALE).train_and_encode(inputs)
 
     assert seen["scales"] == MULTI_SCALE
+
+
+def test_shrinkage_is_recorded_so_two_runs_are_distinguishable():
+    from cbir.configs.cnn import PooledConfig, RMACConfig
+
+    assert descriptor_params(PooledConfig(shrinkage=0.01))["shrinkage"] == 0.01
+    assert descriptor_params(PooledConfig())["shrinkage"] == 0.0
+    assert descriptor_params(RMACConfig())["shrinkage"] == 0.0

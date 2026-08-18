@@ -106,3 +106,53 @@ def test_whitening_survives_a_zero_variance_direction():
     data = _descriptors(n=100, d=16, rank=3)
     out = PCACompression.fit(data, dim=8, whiten=True).transform(data)
     assert np.isfinite(out).all()
+
+
+def _near_singular(n: int = 40, d: int = 32, seed: int = 0) -> np.ndarray:
+    """`n` vectors barely outnumbering `d` — the regime whitening breaks in."""
+    rng = np.random.default_rng(seed)
+    return rng.normal(size=(n, d)).astype(np.float32)
+
+
+def test_shrinkage_tames_the_smallest_directions():
+    # The failure it exists for: with n close to d the trailing eigenvalues are noise,
+    # and dividing by their square roots amplifies that noise enormously.
+    data = _near_singular()
+    plain = PCACompression.fit(data, dim=32, whiten=True)
+    shrunk = PCACompression.fit(data, dim=32, whiten=True, shrinkage=0.1)
+
+    assert np.abs(shrunk.components).max() < np.abs(plain.components).max()
+
+
+def test_shrinkage_barely_touches_the_leading_directions():
+    # It must not be a blunt instrument: the large eigenvalues dwarf eps, so the
+    # directions that carry the signal are left almost exactly as they were.
+    data = _descriptors(n=500, d=32, rank=32)
+    plain = PCACompression.fit(data, dim=4, whiten=True)
+    shrunk = PCACompression.fit(data, dim=4, whiten=True, shrinkage=1e-4)
+
+    ratio = np.linalg.norm(shrunk.components, axis=1) / np.linalg.norm(plain.components, axis=1)
+    assert ratio.min() > 0.99
+
+
+def test_shrinkage_defaults_to_off():
+    data = _descriptors()
+    default = PCACompression.fit(data, dim=8, whiten=True)
+    explicit = PCACompression.fit(data, dim=8, whiten=True, shrinkage=0.0)
+    np.testing.assert_allclose(default.transform(data), explicit.transform(data))
+
+
+def test_shrinkage_does_nothing_without_whitening():
+    # It only ever enters the whitening divisor, so a plain PCA must be unaffected --
+    # otherwise the parameter would silently change runs that never asked for it.
+    data = _descriptors()
+    plain = PCACompression.fit(data, dim=8, shrinkage=0.5)
+    none = PCACompression.fit(data, dim=8)
+    np.testing.assert_allclose(plain.transform(data), none.transform(data))
+
+
+def test_negative_shrinkage_is_rejected():
+    # A negative eps would subtract from the eigenvalues and can flip one negative,
+    # which yields NaN through the square root rather than an error.
+    with pytest.raises(ValueError, match="shrinkage must be non-negative"):
+        PCACompression.fit(_descriptors(), dim=8, whiten=True, shrinkage=-0.1)
