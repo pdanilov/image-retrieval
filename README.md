@@ -136,52 +136,78 @@ VLAD at k=4096 needs more than 48 GB of RAM: `encode` holds about three copies o
 10.5 GB database matrix while the ~20 GB of RootSIFT descriptors are still resident. It
 was run with WSL at 64 GB. Below k=2048 the default 48 GB is fine.
 
+
 ## CNN-tier results
 
-Same protocol as above — roxford5k, anything fitted is fitted on rparis6k, seed 0,
-mAP ×100 — so these rows sit directly beside the classic ones.
+**Every number in this section is AlexNet.** Not a default worth glossing over: AlexNet
+is the weakest backbone in the published table by a wide margin, and the same methods on
+VGG or ResNet score 10–20 mAP higher. Nothing here should be read as a statement about
+what MAC, GeM or R-MAC can do — only about how they rank against each other, and against
+the classic tier, on one fixed and deliberately modest backbone.
+
+Same protocol as the classic tier — roxford5k, anything fitted is fitted on rparis6k,
+seed 0, mAP ×100.
 
 ```
-uv run cbir evaluate --dataset roxford5k neural_codes --dim 256
-uv run cbir evaluate --dataset roxford5k gem --p None --scales 1.0 0.7071067811865476 0.5
+uv run cbir evaluate --dataset roxford5k neural-codes --dim 256
+uv run cbir evaluate --dataset roxford5k gem  --p 4.0 --scales 1.0 0.7071067811865476 0.5
+uv run cbir evaluate --dataset roxford5k rmac --levels 3 --scales 1.0 0.7071067811865476 0.5
 ```
 
-| method | dim | Medium | Hard |
-|---|---:|---:|---:|
-| Neural Codes (fc6) | 4096 | 12.2 | 2.8 |
-| Neural Codes + PCA | 256 | 11.7 | 2.5 |
-| MAC, single-scale | 256 | 22.9 | 5.6 |
-| MAC, multi-scale + PCA-whitening | 128 | 26.1 | 7.9 |
-| **MAC, multi-scale** | **256** | **27.6** | **9.0** |
-| *(VLAD k=4096, for reference)* | *524288* | *38.5* | *19.5* |
-| *(Fisher k=256, for reference)* | *65536* | *27.4* | *14.4* |
+| method | dim | Medium | Hard | reference (AlexNet) |
+|---|---:|---:|---:|---|
+| Neural Codes (fc6) | 4096 | 12.2 | 2.8 | none on ROxford |
+| Neural Codes + PCA | 256 | 11.7 | 2.5 | none on ROxford |
+| SPoC (`p=1`) | 256 | 21.0 | 2.5 | none (`V–[O]–SPoC` is VGG) |
+| MAC, single-scale | 256 | 22.9 | 5.6 | — |
+| R-MAC (levels=3) | 256 | 24.4 | 4.1 | none (`V–`/`R–` only) |
+| MAC, multi-scale | 256 | 27.6 | **9.0** | `A–[O]–MAC` 28.3 / 8.8 |
+| GeM `p=3`, multi-scale | 256 | 27.9 | 7.2 | `A–[O]–GeM` 33.8 / 10.4 |
+| **GeM `p=4`, multi-scale** | **256** | **28.7** | 7.4 | — |
+| *(Fisher k=256, classic)* | *65536* | *27.4* | *14.4* | — |
+| *(VLAD k=4096, classic)* | *524288* | *38.5* | *19.5* | — |
 
-**The point of this tier is the dimension column.** MAC at 256-D matches Fisher at
-65536-D on Medium — a 256× shorter vector for the same score — and reaches 72% of
-VLAD k=4096's Medium at 1/2048th its length. The classic tier buys its accuracy with
-vector length; the CNN tier does not. Hard is where the gap stays real: VLAD's 19.5
-against MAC's 9.0 is not close, and no amount of compression argues that away.
+**The point of this tier is the dimension column.** GeM at 256-D beats Fisher at
+65536-D on Medium — a 256× shorter vector — and reaches 75% of VLAD k=4096's Medium at
+1/2048th its length. Hard is where the classic tier still wins outright: VLAD's 19.5
+against 9.0 is not close, and compactness does not argue that away.
 
-**Neural Codes losing to VLAD and Fisher is the expected result, not a bug.** Babenko et
-al. ([1404.1777](https://arxiv.org/abs/1404.1777)) report the same ordering for codes
-taken off an ILSVRC-trained network — their contribution is that *retraining* on a
-landmark set fixes it. This harness only runs frozen networks, so its Neural Codes rows
-reproduce their starting point and can never reach their retrained one. An fc6 activation
-was trained to be invariant to the object identity a landmark search has to discriminate.
+**Validation: MAC reproduces, GeM does not.** `A–[O]–MAC` is 28.3 / 8.8 and multi-scale
+MAC here reaches 27.6 / 9.0 — under on Medium, over on Hard. `A–[O]–GeM` is 33.8 and the
+best GeM here is 28.7, a gap of 5.1 that four separate attempts did not close. Since both
+run the identical code path with only `p` differing, and one matches, the difference is
+not in the pooling. The remaining candidate is whitening: the reference applies PCA
+whitening learned on a **separate landmark dataset** to every off-the-shelf row, which
+AGENTS.md's cross-dataset rule does not permit reproducing. Recorded as unexplained
+rather than argued away.
 
-**Validation.** Radenović et al. report `A–[O]–MAC` at Medium 28.3 / Hard 8.8
-([1803.11285](https://arxiv.org/abs/1803.11285), Table 5). Multi-scale MAC here reaches
-27.6 / 9.0 — 0.7 under on Medium, 0.2 over on Hard. Single-scale scores 22.9, so the
-multi-scale averaging is worth +4.7 Medium on its own and accounts for essentially the
-whole gap.
+**Multi-scale is the single largest effect measured here**, worth +4.7 Medium on MAC
+(22.9 → 27.6) — more than the choice of pooling. Scales are 1, 1/√2, 1/2, each
+descriptor L2-normalized before combining, combined by averaging for every method except
+GeM, which reuses its own generalized mean (Radenović et al., §Multi-scale). That
+distinction is worth only ~0.2 mAP here, but it is what the reference specifies.
 
-PCA costs mAP here rather than saving it, in two separable parts: at 256-D with nothing
-discarded (a pure rotation plus mean-centering) Medium falls 27.6 → 24.9, and dropping to
-128-D costs a further 1.7. Whitening then returns +2.9 at 128-D (23.2 → 26.1) — it helps
-only once you are compressing, which is why the uncompressed 256-D row is still the best
-of them. Whitening the full-width descriptor, compressing nothing, is the worst of both
-(26.0).
+**The `p` curve is flat at its top.** Medium runs 21.0, 25.8, 27.9, 28.7, 28.5, 26.2 for
+`p` = 1, 2, 3, 4, 5, 10 — the 3–5 span sits inside 0.8, so "`p=4` is best" is not
+resolvable at one seed. Hard tells a different story from Medium throughout: it rises
+monotonically with `p` all the way to true max, so **MAC remains the best Hard result**
+(9.0) and no finite exponent beats it. Hard pairs share few distinctive activations, and
+averaging dilutes exactly the peaks that identify them.
 
-Caveats: AlexNet only, single seed, roxford5k only. `max_side=1024` caps the input; scaled
-inputs are floored at the 63-px minimum AlexNet's conv stack accepts, which only ever
-triggers below full scale.
+**PCA costs mAP here rather than saving it.** On multi-scale MAC: at 256-D with nothing
+discarded (a pure rotation plus mean-centering) Medium falls 27.6 → 24.9; dropping to
+128-D costs a further 1.7; whitening then returns +2.9 at 128-D (23.2 → 26.1). So
+whitening helps only once you are compressing, and the uncompressed 256-D descriptor
+still beats every compressed variant.
+
+**R-MAC underperforms MAC here (24.4 vs 27.6), and the deviation is why.** The published
+method PCA-whitens each *region* vector before summing them; ours whitens the finished
+descriptor, because a per-region projection would have to be fitted on region vectors
+from a third dataset. Summing un-whitened regions compounds the directions they share
+instead of accumulating independent evidence — and whitening afterwards does not recover
+it (+0.6 Medium, Hard worse). MAC sums nothing, so the same omission never touches it.
+
+Caveats: AlexNet only, single seed, roxford5k only, queries bbx-cropped as everywhere
+else. Input is capped at `max_side=1024` and never enlarged, except that scaled inputs
+are floored at the 63-px minimum AlexNet's conv stack accepts — which can only trigger
+below full scale.
