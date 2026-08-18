@@ -148,18 +148,58 @@ def test_multi_scale_changes_the_descriptor(model):
     assert similarity < 0.999
 
 
-def test_scales_are_l2_normalized_before_averaging(monkeypatch, model):
+def _fake_multi_scale(p, vectors):
+    """A PooledCNN whose forward pass is bypassed, yielding `vectors` one per scale."""
+    supply = iter(vectors)
+    model = PooledCNN.__new__(PooledCNN)
+    model.scales, model.device, model.max_side, model.p, model.backbone = (1.0, 0.5), "cpu", 1024, p, "alexnet"
+    model._model = lambda tensor: tensor
+    model.pool = lambda features: torch.from_numpy(next(supply))
+    return model
+
+
+def test_mac_combines_scales_by_plain_averaging():
+    # Radenovic et al. average across scales for every method except GeM. MAC is one of
+    # the "every other", and it is the row we reproduce to within 0.7 mAP.
+    a = np.array([[1.0, 0.0]], np.float32)
+    b = np.array([[0.0, 1.0]], np.float32)
+    out = _fake_multi_scale(None, [a, b]).describe(Image.new("RGB", (8, 8)))
+    np.testing.assert_allclose(out, [[0.5, 0.5]], atol=1e-6)
+
+
+def test_gem_combines_scales_by_its_own_generalized_mean():
+    # The exception in the same paragraph: GeM reuses its exponent across scales too.
+    # Averaging instead is invisible for MAC and costs GeM several mAP.
+    a = np.array([[1.0, 0.25]], np.float32)
+    b = np.array([[0.5, 0.75]], np.float32)
+    out = _fake_multi_scale(3.0, [a, b]).describe(Image.new("RGB", (8, 8)))
+
+    # describe() L2-normalizes each scale before combining, so the expectation must too.
+    a, b = (v / np.linalg.norm(v) for v in (a, b))
+    expected = ((a**3 + b**3) / 2) ** (1 / 3)
+    np.testing.assert_allclose(out, expected, rtol=1e-5)
+    # And it is genuinely not the arithmetic mean, or the test would prove nothing.
+    assert not np.allclose(out, (a + b) / 2, atol=1e-3)
+
+
+def test_one_scale_is_untouched_by_the_combination_rule():
+    # Single-scale rows are already recorded; the generalized mean of one element is an
+    # identity only up to float error, so that path is short-circuited.
+    a = np.array([[0.6, 0.8]], np.float32)
+    model = _fake_multi_scale(3.0, [a])
+    model.scales = (1.0,)
+    np.testing.assert_array_equal(model.describe(Image.new("RGB", (8, 8))), a)
+
+
+def test_scales_are_l2_normalized_before_combining():
     # Otherwise the full-resolution pass dominates: it pools over the most positions,
-    # so its raw magnitude is the largest and the "average" is it plus a nudge.
-    vectors = iter([np.array([[3.0, 0.0]], np.float32), np.array([[0.0, 1.0]], np.float32)])
-    two = PooledCNN.__new__(PooledCNN)
-    two.scales, two.device = (1.0, 0.5), "cpu"
-    two._model = lambda tensor: tensor
-    two.max_side, two.p, two.backbone = 1024, 3.0, "alexnet"
-    monkeypatch.setattr(two, "pool", lambda features: torch.from_numpy(next(vectors)))
+    # so its raw magnitude is the largest and the combination is it plus a nudge. Shown
+    # on MAC, whose plain averaging makes the 3:1 imbalance easiest to read.
+    vectors = [np.array([[3.0, 0.0]], np.float32), np.array([[0.0, 1.0]], np.float32)]
 
     # Equal weight after normalization -> the mean of two unit vectors, not 3:1.
-    np.testing.assert_allclose(two.describe(Image.new("RGB", (8, 8))), [[0.5, 0.5]], atol=1e-6)
+    out = _fake_multi_scale(None, vectors).describe(Image.new("RGB", (8, 8)))
+    np.testing.assert_allclose(out, [[0.5, 0.5]], atol=1e-6)
 
 
 @pytest.mark.parametrize("scales", [(), (1.0, 0.0), (1.0, -0.5)])

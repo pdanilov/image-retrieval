@@ -130,18 +130,33 @@ class PooledCNN:
         return features.clamp(min=EPS).pow(self.p).mean(dim=(2, 3)).pow(1.0 / self.p)
 
     def describe(self, image: PILImage) -> np.ndarray:
-        """One `(1, C)` descriptor, averaged over `self.scales`.
+        """One `(1, C)` descriptor combining every scale in `self.scales`.
 
-        Each scale's vector is L2-normalized *before* averaging. Without that the
+        Each scale's vector is L2-normalized *before* combining. Without that the
         largest scale dominates: it pools over more positions, so its raw magnitude is
-        the biggest, and the average would be it plus a nudge.
+        the biggest, and the combination would be it plus a nudge.
+
+        The combination follows the same rule as the reference table (Radenović et al.,
+        §"Multi-scale"): plain averaging for every method **except** GeM, which reuses
+        its own generalized mean across scales as well as across positions. Getting this
+        wrong is invisible for MAC and costs several mAP for GeM, which is precisely the
+        discrepancy it was found by.
         """
         pooled = []
         for scale in self.scales:
             features = self._model(self.preprocess(image, scale).to(self.device))
             vector = self.pool(features).float().cpu().numpy()
             pooled.append(safe_l2_normalize(vector, axis=1))
-        return np.mean(pooled, axis=0)
+
+        # Short-circuited rather than left to the general path: for one scale the
+        # generalized mean is an identity only up to float error, and single-scale rows
+        # already recorded must reproduce exactly.
+        if len(pooled) == 1:
+            return pooled[0]
+        stacked = np.stack(pooled)
+        if self.p is None:
+            return stacked.mean(axis=0)
+        return (np.maximum(stacked, EPS) ** self.p).mean(axis=0) ** (1.0 / self.p)
 
     def extract(self, images: Iterable[PILImage]) -> np.ndarray:
         """`(N, C)` L2-normalized descriptors, in input order.
