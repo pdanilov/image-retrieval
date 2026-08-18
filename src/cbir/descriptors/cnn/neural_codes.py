@@ -21,10 +21,18 @@ from PIL.Image import Image as PILImage
 
 from cbir.descriptors.classic.normalization import safe_l2_normalize
 
-Backbone = Literal["alexnet"]
+Backbone = Literal["alexnet", "vgg16"]
 
 DIM = 4096
 """Width of `fc6` in both AlexNet and VGG — the canonical Neural Code size."""
+
+FC6_CUTOFF: dict[str, int] = {"alexnet": 3, "vgg16": 2}
+"""Where to truncate each backbone's `classifier` to end just after `fc6`'s ReLU.
+
+The index differs because the two classifiers do not start the same way: AlexNet opens
+with a `Dropout`, VGG16 opens with the `Linear` itself. Off by one in either direction
+is silent — too far gives fc7, too short gives the pre-ReLU signed projection — and both
+would return plausible vectors with quietly worse mAP."""
 
 INPUT_SIZE = 224
 """What the fully-connected layer's fixed input size forces every image down to."""
@@ -50,16 +58,21 @@ class NeuralCodes:
 
         AlexNet's `classifier` is
         `[Dropout, Linear(9216, 4096), ReLU, Dropout, Linear(4096, 4096), ReLU, Linear(4096, 1000)]`,
-        so `fc6` is index 1 and `[:3]` keeps it *with* its ReLU. Post-activation is what
-        "neural codes" means in the paper and in every reimplementation — the raw
+        so `fc6` is index 1 and `[:3]` keeps it *with* its ReLU. VGG16's omits the
+        leading `Dropout`, so the same cut is `[:2]` — see `FC6_CUTOFF`. Post-activation
+        is what "neural codes" means in the paper and in every reimplementation — the raw
         pre-ReLU projection is a different, signed feature.
         """
-        from torchvision.models import AlexNet_Weights, alexnet
+        import torchvision.models as tv
 
-        if backbone != "alexnet":
-            raise ValueError(f"unknown backbone {backbone!r}")
-        model = alexnet(weights=AlexNet_Weights.IMAGENET1K_V1)
-        model.classifier = torch.nn.Sequential(*list(model.classifier.children())[:3])
+        match backbone:
+            case "alexnet":
+                model = tv.alexnet(weights=tv.AlexNet_Weights.IMAGENET1K_V1)
+            case "vgg16":
+                model = tv.vgg16(weights=tv.VGG16_Weights.IMAGENET1K_V1)
+            case _:
+                raise ValueError(f"unknown backbone {backbone!r}")
+        model.classifier = torch.nn.Sequential(*list(model.classifier.children())[: FC6_CUTOFF[backbone]])
         return model
 
     @staticmethod

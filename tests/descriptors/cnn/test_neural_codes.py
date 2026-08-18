@@ -88,3 +88,26 @@ def test_different_images_give_different_codes(model):
 def test_unknown_backbone_is_rejected():
     with pytest.raises(ValueError, match="unknown backbone"):
         NeuralCodes("resnet101", device="cpu")  # type: ignore[arg-type]
+
+
+def test_vgg16_truncates_to_fc6_not_fc7():
+    # The two classifiers do not start alike -- AlexNet opens with a Dropout, VGG16 with
+    # the Linear -- so the same cut is a different index. Too far gives fc7, too short
+    # gives the pre-ReLU signed projection; both return plausible-looking vectors.
+    layers = list(NeuralCodes._build("vgg16").classifier.children())
+    assert [type(layer).__name__ for layer in layers] == ["Linear", "ReLU"]
+    assert layers[0].out_features == DIM
+
+
+def test_alexnet_truncation_is_unchanged():
+    layers = list(NeuralCodes._build("alexnet").classifier.children())
+    assert [type(layer).__name__ for layer in layers] == ["Dropout", "Linear", "ReLU"]
+
+
+def test_vgg16_codes_are_post_relu_and_the_canonical_width():
+    # Post-ReLU means non-negative. A signed code here would mean fc6 was taken before
+    # its activation, which is a different feature than the paper's.
+    codes = NeuralCodes("vgg16", device="cpu", batch_size=2).extract([Image.new("RGB", (300, 200), "gray")])
+
+    assert codes.shape == (1, DIM)
+    assert (codes >= 0).all()
