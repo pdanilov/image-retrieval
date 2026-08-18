@@ -211,3 +211,36 @@ def test_impossible_scale_sets_are_rejected(scales):
 def test_unknown_backbone_is_rejected():
     with pytest.raises(ValueError, match="unknown backbone"):
         PooledCNN("inception", device="cpu")  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("backbone", ["resnet18", "resnet50"])
+def test_resnet_backbones_produce_their_declared_width(backbone):
+    # CHANNELS is what every caller sizes its PCA and empty-result array by, so a wrong
+    # entry surfaces as a shape error deep in the run rather than here.
+    model = PooledCNN(backbone, p=3.0, device="cpu")
+    out = model.extract([Image.new("RGB", (200, 150), "gray")])
+
+    assert out.shape == (1, CHANNELS[backbone])
+    assert np.linalg.norm(out, axis=1) == pytest.approx(1.0, abs=1e-5)
+
+
+def test_resnet_depths_are_distinguished_not_aliased():
+    # The shared match arm builds all three from the backbone name; a slip there would
+    # silently run resnet18 weights under a resnet50 label.
+    assert CHANNELS["resnet18"] == 512
+    assert CHANNELS["resnet50"] == CHANNELS["resnet101"] == 2048
+
+    shallow = sum(p.numel() for p in PooledCNN("resnet18", device="cpu")._model.parameters())
+    deep = sum(p.numel() for p in PooledCNN("resnet50", device="cpu")._model.parameters())
+    assert deep > shallow * 2
+
+
+def test_every_backbone_has_a_minimum_side():
+    # A missing MIN_SIDE entry is a KeyError inside preprocess, on the first scaled
+    # image of a multi-hour run.
+    from typing import get_args
+
+    from cbir.descriptors.cnn.pooling import Backbone as PoolBackbone
+
+    for name in get_args(PoolBackbone):
+        assert name in MIN_SIDE and name in CHANNELS

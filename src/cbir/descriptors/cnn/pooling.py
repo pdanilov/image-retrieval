@@ -34,10 +34,20 @@ from PIL.Image import Image as PILImage
 from cbir.descriptors.classic.normalization import safe_l2_normalize
 from cbir.descriptors.cnn.neural_codes import IMAGENET_MEAN, IMAGENET_STD
 
-Backbone = Literal["alexnet", "vgg16", "resnet101"]
+Backbone = Literal["alexnet", "vgg16", "resnet18", "resnet50", "resnet101"]
 
-CHANNELS: dict[str, int] = {"alexnet": 256, "vgg16": 512, "resnet101": 2048}
-"""Width of each backbone's last conv map — and therefore of the descriptor."""
+CHANNELS: dict[str, int] = {
+    "alexnet": 256,
+    "vgg16": 512,
+    "resnet18": 512,
+    "resnet50": 2048,
+    "resnet101": 2048,
+}
+"""Width of each backbone's last conv map — and therefore of the descriptor.
+
+Note that depth and width are separate axes: resnet18 is deeper than vgg16 but produces
+the same 512-D descriptor, and resnet50 matches resnet101's 2048. Comparing across
+backbones therefore compares two things at once unless the width is held fixed."""
 
 EPS = 1e-6
 """Floor before the power in GeM. Conv maps are post-ReLU so never negative, but an
@@ -47,12 +57,23 @@ exact zero raised to a fractional power has an infinite gradient and yields NaN 
 MULTI_SCALE: tuple[float, ...] = (1.0, 2**-0.5, 0.5)
 """The scale set the off-the-shelf CNN baselines are published at: full, 1/sqrt(2), 1/2."""
 
-MIN_SIDE: dict[str, int] = {"alexnet": 63, "vgg16": 32, "resnet101": 32}
+MIN_SIDE: dict[str, int] = {
+    "alexnet": 63,
+    "vgg16": 32,
+    "resnet18": 32,
+    "resnet50": 32,
+    "resnet101": 32,
+}
 """Smallest input each conv stack accepts, below which its own pooling layers raise.
 
 Measured, not assumed: AlexNet's stride-4 first conv plus three max-pools exhaust a
 62-px side. Query crops here go down to 131 px on the long side and are far narrower on
-the short one, so a 1/2-scale pass lands underneath this without a floor."""
+the short one, so a 1/2-scale pass lands underneath this without a floor.
+
+The ResNets technically survive down to 8 px — adaptive pooling does not fail the way a
+fixed kernel does — but 32 is kept as the floor rather than their true minimum: below it
+the last conv map is a single cell, which makes pooling and the R-MAC region grid
+degenerate without raising."""
 
 
 class PooledCNN:
@@ -88,8 +109,11 @@ class PooledCNN:
                 return tv.alexnet(weights=tv.AlexNet_Weights.IMAGENET1K_V1).features
             case "vgg16":
                 return tv.vgg16(weights=tv.VGG16_Weights.IMAGENET1K_V1).features
-            case "resnet101":
-                model = tv.resnet101(weights=tv.ResNet101_Weights.IMAGENET1K_V1)
+            case "resnet18" | "resnet50" | "resnet101":
+                # Same surgery for every depth; only the constructor and weights differ.
+                builder = getattr(tv, backbone)
+                weights = getattr(tv, f"ResNet{backbone.removeprefix('resnet')}_Weights").IMAGENET1K_V1
+                model = builder(weights=weights)
                 # Drop avgpool and fc; children()[:-2] ends at layer4's output.
                 return torch.nn.Sequential(*list(model.children())[:-2])
             case _:
