@@ -34,12 +34,14 @@ from PIL.Image import Image as PILImage
 from cbir.descriptors.classic.normalization import safe_l2_normalize
 from cbir.descriptors.cnn.neural_codes import IMAGENET_MEAN, IMAGENET_STD
 
-Backbone = Literal["alexnet", "vgg16", "resnet18", "resnet50", "resnet101"]
+Backbone = Literal["alexnet", "vgg16", "vgg19", "resnet18", "resnet34", "resnet50", "resnet101"]
 
 CHANNELS: dict[str, int] = {
     "alexnet": 256,
     "vgg16": 512,
+    "vgg19": 512,
     "resnet18": 512,
+    "resnet34": 512,
     "resnet50": 2048,
     "resnet101": 2048,
 }
@@ -60,7 +62,9 @@ MULTI_SCALE: tuple[float, ...] = (1.0, 2**-0.5, 0.5)
 MIN_SIDE: dict[str, int] = {
     "alexnet": 63,
     "vgg16": 32,
+    "vgg19": 32,
     "resnet18": 32,
+    "resnet34": 32,
     "resnet50": 32,
     "resnet101": 32,
 }
@@ -107,9 +111,10 @@ class PooledCNN:
         match backbone:
             case "alexnet":
                 return tv.alexnet(weights=tv.AlexNet_Weights.IMAGENET1K_V1).features
-            case "vgg16":
-                return tv.vgg16(weights=tv.VGG16_Weights.IMAGENET1K_V1).features
-            case "resnet18" | "resnet50" | "resnet101":
+            case "vgg16" | "vgg19":
+                builder = getattr(tv, backbone)
+                return builder(weights=getattr(tv, f"{backbone.upper()}_Weights").IMAGENET1K_V1).features
+            case "resnet18" | "resnet34" | "resnet50" | "resnet101":
                 # Same surgery for every depth; only the constructor and weights differ.
                 builder = getattr(tv, backbone)
                 weights = getattr(tv, f"ResNet{backbone.removeprefix('resnet')}_Weights").IMAGENET1K_V1

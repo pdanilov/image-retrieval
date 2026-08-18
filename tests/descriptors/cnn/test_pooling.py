@@ -213,7 +213,7 @@ def test_unknown_backbone_is_rejected():
         PooledCNN("inception", device="cpu")  # type: ignore[arg-type]
 
 
-@pytest.mark.parametrize("backbone", ["resnet18", "resnet50"])
+@pytest.mark.parametrize("backbone", ["vgg19", "resnet18", "resnet34", "resnet50"])
 def test_resnet_backbones_produce_their_declared_width(backbone):
     # CHANNELS is what every caller sizes its PCA and empty-result array by, so a wrong
     # entry surfaces as a shape error deep in the run rather than here.
@@ -222,6 +222,19 @@ def test_resnet_backbones_produce_their_declared_width(backbone):
 
     assert out.shape == (1, CHANNELS[backbone])
     assert np.linalg.norm(out, axis=1) == pytest.approx(1.0, abs=1e-5)
+
+
+def test_same_width_backbones_are_not_the_same_network():
+    # vgg19, resnet18 and resnet34 all produce 512-D descriptors, which is the whole
+    # point of comparing them -- width held fixed, architecture and depth varying. An
+    # aliasing slip in the shared match arms would make that comparison meaningless.
+    sizes = {
+        name: sum(p.numel() for p in PooledCNN(name, device="cpu")._model.parameters())
+        for name in ("vgg16", "vgg19", "resnet18", "resnet34")
+    }
+    assert len(set(sizes.values())) == 4
+    assert sizes["vgg19"] > sizes["vgg16"]
+    assert sizes["resnet34"] > sizes["resnet18"]
 
 
 def test_resnet_depths_are_distinguished_not_aliased():
