@@ -135,3 +135,53 @@ clustering, so small `k` is nearly free once the sweep is running.
 VLAD at k=4096 needs more than 48 GB of RAM: `encode` holds about three copies of the
 10.5 GB database matrix while the ~20 GB of RootSIFT descriptors are still resident. It
 was run with WSL at 64 GB. Below k=2048 the default 48 GB is fine.
+
+## CNN-tier results
+
+Same protocol as above — roxford5k, anything fitted is fitted on rparis6k, seed 0,
+mAP ×100 — so these rows sit directly beside the classic ones.
+
+```
+uv run cbir evaluate --dataset roxford5k neural_codes --dim 256
+uv run cbir evaluate --dataset roxford5k gem --p None --scales 1.0 0.7071067811865476 0.5
+```
+
+| method | dim | Medium | Hard |
+|---|---:|---:|---:|
+| Neural Codes (fc6) | 4096 | 12.2 | 2.8 |
+| Neural Codes + PCA | 256 | 11.7 | 2.5 |
+| MAC, single-scale | 256 | 22.9 | 5.6 |
+| MAC, multi-scale + PCA-whitening | 128 | 26.1 | 7.9 |
+| **MAC, multi-scale** | **256** | **27.6** | **9.0** |
+| *(VLAD k=4096, for reference)* | *524288* | *38.5* | *19.5* |
+| *(Fisher k=256, for reference)* | *65536* | *27.4* | *14.4* |
+
+**The point of this tier is the dimension column.** MAC at 256-D matches Fisher at
+65536-D on Medium — a 256× shorter vector for the same score — and reaches 72% of
+VLAD k=4096's Medium at 1/2048th its length. The classic tier buys its accuracy with
+vector length; the CNN tier does not. Hard is where the gap stays real: VLAD's 19.5
+against MAC's 9.0 is not close, and no amount of compression argues that away.
+
+**Neural Codes losing to VLAD and Fisher is the expected result, not a bug.** Babenko et
+al. ([1404.1777](https://arxiv.org/abs/1404.1777)) report the same ordering for codes
+taken off an ILSVRC-trained network — their contribution is that *retraining* on a
+landmark set fixes it. This harness only runs frozen networks, so its Neural Codes rows
+reproduce their starting point and can never reach their retrained one. An fc6 activation
+was trained to be invariant to the object identity a landmark search has to discriminate.
+
+**Validation.** Radenović et al. report `A–[O]–MAC` at Medium 28.3 / Hard 8.8
+([1803.11285](https://arxiv.org/abs/1803.11285), Table 5). Multi-scale MAC here reaches
+27.6 / 9.0 — 0.7 under on Medium, 0.2 over on Hard. Single-scale scores 22.9, so the
+multi-scale averaging is worth +4.7 Medium on its own and accounts for essentially the
+whole gap.
+
+PCA costs mAP here rather than saving it, in two separable parts: at 256-D with nothing
+discarded (a pure rotation plus mean-centering) Medium falls 27.6 → 24.9, and dropping to
+128-D costs a further 1.7. Whitening then returns +2.9 at 128-D (23.2 → 26.1) — it helps
+only once you are compressing, which is why the uncompressed 256-D row is still the best
+of them. Whitening the full-width descriptor, compressing nothing, is the worst of both
+(26.0).
+
+Caveats: AlexNet only, single seed, roxford5k only. `max_side=1024` caps the input; scaled
+inputs are floored at the 63-px minimum AlexNet's conv stack accepts, which only ever
+triggers below full scale.
