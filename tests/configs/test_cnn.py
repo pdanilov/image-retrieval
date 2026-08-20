@@ -212,3 +212,28 @@ def test_shrinkage_is_recorded_so_two_runs_are_distinguishable():
     assert descriptor_params(PooledConfig(shrinkage=0.01))["shrinkage"] == 0.01
     assert descriptor_params(PooledConfig())["shrinkage"] == 0.0
     assert descriptor_params(RMACConfig())["shrinkage"] == 0.0
+
+
+def test_whiten_source_defaults_to_the_sibling_benchmark():
+    # The SfM corpus is an explicit opt-in: it is a third dataset, and a run that used
+    # it without saying so would not be comparable to any other row.
+    from cbir.configs.cnn import PooledConfig, RMACConfig
+
+    assert descriptor_params(PooledConfig())["whiten_source"] == "held_out"
+    assert descriptor_params(RMACConfig())["whiten_source"] == "held_out"
+
+
+def test_held_out_source_uses_the_eval_splits_paths(wired):
+    from cbir.configs.cnn import PooledConfig
+
+    _, inputs = wired
+    assert PooledConfig()._fitting_paths(inputs) == inputs.held_out_paths
+
+
+def test_sfm_source_uses_the_corpus_not_the_eval_split(monkeypatch, wired):
+    from cbir.configs import cnn as cnn_config
+
+    _, inputs = wired
+    monkeypatch.setattr(cnn_config, "whitening_paths", lambda source: [f"sfm/{source}/x"])
+
+    assert cnn_config.PooledConfig(whiten_source="sfm30k")._fitting_paths(inputs) == ["sfm/sfm30k/x"]

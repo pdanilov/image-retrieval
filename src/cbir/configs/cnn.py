@@ -21,6 +21,7 @@ from cbir.descriptors.cnn.pooling import CHANNELS, PooledCNN
 from cbir.descriptors.cnn.pooling import Backbone as PoolBackbone
 from cbir.descriptors.cnn.prepare import EvalImages, prepare_image_inputs
 from cbir.descriptors.cnn.rmac import RMAC
+from cbir.descriptors.cnn.sfm import WhitenSource, whitening_paths
 
 
 @dataclass(frozen=True)
@@ -95,6 +96,10 @@ class PooledConfig:
             call this "essential" for off-the-shelf CNN descriptors and apply it to
             every such row they publish, so their numbers are not comparable without
             it. Off by default so that a run says which it was.
+        whiten_source: Which corpus the whitening is fitted on. `held_out` is the
+            sibling benchmark (6322 images); `sfm30k`/`sfm120k` are the retrieval-SfM
+            landmark sets the reference uses, which need a manual download. Recorded so
+            a row always says where its projection came from.
         shrinkage: Floors whitening's divisor at `sqrt(lambda + eps)`, `eps` being this
             fraction of the mean eigenvalue. Only whitening reads it. Whitening is
             unstable when the held-out set is not much larger than the descriptor width,
@@ -108,6 +113,7 @@ class PooledConfig:
     scales: tuple[float, ...] = (1.0,)
     dim: int | None = None
     whiten: bool = False
+    whiten_source: WhitenSource = "held_out"
     shrinkage: float = 0.0
     seed: int = 0
 
@@ -116,6 +122,12 @@ class PooledConfig:
 
     def prepare(self, dataset: EvalDataset) -> EvalImages:
         return prepare_image_inputs(dataset)
+
+    def _fitting_paths(self, inputs: EvalImages) -> list[str]:
+        """Images the PCA/whitening is fitted on — never the ones being searched."""
+        if self.whiten_source == "held_out":
+            return inputs.held_out_paths
+        return whitening_paths(self.whiten_source)
 
     def train_and_encode(self, inputs: EvalImages) -> Encoded:
         model = PooledCNN(self.backbone, p=self.p, max_side=self.max_side, scales=self.scales)
@@ -130,7 +142,7 @@ class PooledConfig:
         if self.dim is None and not self.whiten:
             return database_vectors, query_vectors
 
-        held_out = model.extract(iter_images(inputs.held_out_paths))
+        held_out = model.extract(iter_images(self._fitting_paths(inputs)))
         # Whitening with no explicit width still needs a PCA, fitted at the backbone's
         # full descriptor size: it rescales the axes without discarding any.
         width = self.dim if self.dim is not None else CHANNELS[self.backbone]
@@ -157,6 +169,10 @@ class RMACConfig:
         whiten: PCA-whiten the finished descriptor. The paper whitens each region
             vector instead, with a projection learned on a separate landmark set —
             see `descriptors/cnn/rmac.py` for why that is not what happens here.
+        whiten_source: Which corpus the whitening is fitted on. `held_out` is the
+            sibling benchmark (6322 images); `sfm30k`/`sfm120k` are the retrieval-SfM
+            landmark sets the reference uses, which need a manual download. Recorded so
+            a row always says where its projection came from.
         shrinkage: Floors whitening's divisor at `sqrt(lambda + eps)`, `eps` being this
             fraction of the mean eigenvalue. Only whitening reads it. Whitening is
             unstable when the held-out set is not much larger than the descriptor width,
@@ -170,6 +186,7 @@ class RMACConfig:
     scales: tuple[float, ...] = (1.0,)
     dim: int | None = None
     whiten: bool = False
+    whiten_source: WhitenSource = "held_out"
     shrinkage: float = 0.0
     seed: int = 0
 
@@ -178,6 +195,12 @@ class RMACConfig:
 
     def prepare(self, dataset: EvalDataset) -> EvalImages:
         return prepare_image_inputs(dataset)
+
+    def _fitting_paths(self, inputs: EvalImages) -> list[str]:
+        """Images the PCA/whitening is fitted on — never the ones being searched."""
+        if self.whiten_source == "held_out":
+            return inputs.held_out_paths
+        return whitening_paths(self.whiten_source)
 
     def train_and_encode(self, inputs: EvalImages) -> Encoded:
         model = RMAC(self.backbone, levels=self.levels, max_side=self.max_side, scales=self.scales)
@@ -192,7 +215,7 @@ class RMACConfig:
         if self.dim is None and not self.whiten:
             return database_vectors, query_vectors
 
-        held_out = model.extract(iter_images(inputs.held_out_paths))
+        held_out = model.extract(iter_images(self._fitting_paths(inputs)))
         width = self.dim if self.dim is not None else CHANNELS[self.backbone]
         pca = PCACompression.fit(held_out, dim=width, whiten=self.whiten, shrinkage=self.shrinkage, seed=self.seed)
         return pca.transform(database_vectors), pca.transform(query_vectors)
