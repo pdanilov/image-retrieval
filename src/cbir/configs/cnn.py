@@ -139,7 +139,14 @@ class PooledConfig:
         return whitening_paths(self.whiten_source)
 
     def train_and_encode(self, inputs: EvalImages) -> Encoded:
-        model = PooledCNN(self.backbone, p=self.p, max_side=self.max_side, scales=self.scales, weights=self.weights)
+        model = PooledCNN(
+            self.backbone,
+            p=self.p,
+            max_side=self.max_side,
+            scales=self.scales,
+            weights=self.weights,
+            last_pool=self.last_pool,
+        )
 
         database_vectors = model.extract(iter_images(inputs.database_paths))
         cropped = (

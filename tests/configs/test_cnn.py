@@ -245,3 +245,26 @@ def test_weights_source_is_recorded_and_defaults_to_torchvision():
     assert descriptor_params(PooledConfig())["weights"] == "torchvision"
     assert descriptor_params(RMACConfig())["weights"] == "torchvision"
     assert descriptor_params(PooledConfig(weights="caffe"))["weights"] == "caffe"
+
+
+@pytest.mark.parametrize("field,value", [("weights", "caffe"), ("last_pool", False), ("max_side", 512)])
+def test_every_model_knob_reaches_the_model(monkeypatch, wired, field, value):
+    # `scales` had such a test; `weights` and `last_pool` did not, and last_pool was
+    # silently dropped between the config and PooledCNN -- three runs recorded a flag
+    # they had not applied. Parameterized so the next knob is covered by construction.
+    from cbir.configs.cnn import PooledConfig, RMACConfig
+
+    for factory, name in ((PooledConfig, "PooledCNN"), (RMACConfig, "RMAC")):
+        seen: dict = {}
+
+        def _record(backbone, _seen=seen, **kwargs):
+            _seen.update(kwargs)
+            return type("_M", (), {"extract": lambda self, images: np.zeros((len(list(images)), 8), np.float32)})()
+
+        monkeypatch.setattr(cnn_config, name, _record)
+        monkeypatch.setattr(cnn_config, "iter_images", lambda paths: list(paths))
+        monkeypatch.setattr(cnn_config, "crop_query", lambda image, box: image)
+        _, inputs = wired
+
+        factory(**{field: value}).train_and_encode(inputs)
+        assert seen[field] == value, f"{factory.__name__} dropped {field}"
