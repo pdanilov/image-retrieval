@@ -237,3 +237,11 @@ def test_sfm_source_uses_the_corpus_not_the_eval_split(monkeypatch, wired):
     monkeypatch.setattr(cnn_config, "whitening_paths", lambda source: [f"sfm/{source}/x"])
 
     assert cnn_config.PooledConfig(whiten_source="sfm30k")._fitting_paths(inputs) == ["sfm/sfm30k/x"]
+
+
+def test_weights_source_is_recorded_and_defaults_to_torchvision():
+    from cbir.configs.cnn import PooledConfig, RMACConfig
+
+    assert descriptor_params(PooledConfig())["weights"] == "torchvision"
+    assert descriptor_params(RMACConfig())["weights"] == "torchvision"
+    assert descriptor_params(PooledConfig(weights="caffe"))["weights"] == "caffe"

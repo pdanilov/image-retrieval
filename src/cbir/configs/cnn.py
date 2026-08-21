@@ -22,6 +22,7 @@ from cbir.descriptors.cnn.pooling import Backbone as PoolBackbone
 from cbir.descriptors.cnn.prepare import EvalImages, prepare_image_inputs
 from cbir.descriptors.cnn.rmac import RMAC
 from cbir.descriptors.cnn.sfm import WhitenSource, whitening_paths
+from cbir.descriptors.cnn.weights import WeightSource
 
 
 @dataclass(frozen=True)
@@ -92,6 +93,9 @@ class PooledConfig:
             native width, which is already compact — with `whiten` on that still means
             a PCA is fitted, at full width, since whitening is a rotation and rescale
             rather than a compression.
+        weights: Whose ImageNet training filled the architecture. The reference
+            implementation uses Caffe-converted weights rather than torchvision's, and
+            they are numerically different networks — a manual download, see weights.py.
         whiten: Divide each PCA direction by its standard deviation. Radenović et al.
             call this "essential" for off-the-shelf CNN descriptors and apply it to
             every such row they publish, so their numbers are not comparable without
@@ -112,6 +116,7 @@ class PooledConfig:
     max_side: int = 1024
     scales: tuple[float, ...] = (1.0,)
     dim: int | None = None
+    weights: WeightSource = "torchvision"
     whiten: bool = False
     whiten_source: WhitenSource = "held_out"
     shrinkage: float = 0.0
@@ -130,7 +135,7 @@ class PooledConfig:
         return whitening_paths(self.whiten_source)
 
     def train_and_encode(self, inputs: EvalImages) -> Encoded:
-        model = PooledCNN(self.backbone, p=self.p, max_side=self.max_side, scales=self.scales)
+        model = PooledCNN(self.backbone, p=self.p, max_side=self.max_side, scales=self.scales, weights=self.weights)
 
         database_vectors = model.extract(iter_images(inputs.database_paths))
         cropped = (
@@ -166,6 +171,9 @@ class RMACConfig:
         scales: Input resolutions, combined by averaging as the reference table
             specifies for every method except GeM.
         dim: PCA width, fitted on the held-out set. `None` keeps the native width.
+        weights: Whose ImageNet training filled the architecture. The reference
+            implementation uses Caffe-converted weights rather than torchvision's, and
+            they are numerically different networks — a manual download, see weights.py.
         whiten: PCA-whiten the finished descriptor. The paper whitens each region
             vector instead, with a projection learned on a separate landmark set —
             see `descriptors/cnn/rmac.py` for why that is not what happens here.
@@ -185,6 +193,7 @@ class RMACConfig:
     max_side: int = 1024
     scales: tuple[float, ...] = (1.0,)
     dim: int | None = None
+    weights: WeightSource = "torchvision"
     whiten: bool = False
     whiten_source: WhitenSource = "held_out"
     shrinkage: float = 0.0
@@ -203,7 +212,9 @@ class RMACConfig:
         return whitening_paths(self.whiten_source)
 
     def train_and_encode(self, inputs: EvalImages) -> Encoded:
-        model = RMAC(self.backbone, levels=self.levels, max_side=self.max_side, scales=self.scales)
+        model = RMAC(
+            self.backbone, levels=self.levels, max_side=self.max_side, scales=self.scales, weights=self.weights
+        )
 
         database_vectors = model.extract(iter_images(inputs.database_paths))
         cropped = (

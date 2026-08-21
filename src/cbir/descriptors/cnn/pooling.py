@@ -33,6 +33,7 @@ from PIL.Image import Image as PILImage
 
 from cbir.descriptors.classic.normalization import safe_l2_normalize
 from cbir.descriptors.cnn.neural_codes import IMAGENET_MEAN, IMAGENET_STD
+from cbir.descriptors.cnn.weights import WeightSource, load_caffe
 
 Backbone = Literal["alexnet", "vgg16", "vgg19", "resnet18", "resnet34", "resnet50", "resnet101"]
 
@@ -90,6 +91,7 @@ class PooledCNN:
         p: float | None = 3.0,
         max_side: int = 1024,
         scales: tuple[float, ...] = (1.0,),
+        weights: WeightSource = "torchvision",
         device: str | None = None,
     ) -> None:
         if not scales:
@@ -100,13 +102,22 @@ class PooledCNN:
         self.p = p
         self.max_side = max_side
         self.scales = scales
+        self.weights = weights
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        self._model = self._build(backbone).to(self.device).eval()
+        self._model = self._build(backbone, weights).to(self.device).eval()
 
     @staticmethod
-    def _build(backbone: Backbone) -> torch.nn.Module:
-        """Everything up to and including the last conv block, classifier discarded."""
+    def _build(backbone: Backbone, weights: WeightSource = "torchvision") -> torch.nn.Module:
+        """Everything up to and including the last conv block, classifier discarded.
+
+        `weights` selects whose ImageNet training filled it. The reference implementation
+        uses Caffe-converted weights rather than torchvision's, and they are numerically
+        different networks — see `weights.py`.
+        """
         import torchvision.models as tv
+
+        if weights == "caffe":
+            return load_caffe(PooledCNN._build(backbone, "torchvision"), backbone)
 
         match backbone:
             case "alexnet":
