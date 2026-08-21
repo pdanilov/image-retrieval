@@ -96,6 +96,9 @@ class PooledConfig:
         weights: Whose ImageNet training filled the architecture. The reference
             implementation uses Caffe-converted weights rather than torchvision's, and
             they are numerically different networks — a manual download, see weights.py.
+        last_pool: Keep VGG's and AlexNet's trailing max-pool. The reference drops it,
+            which quadruples the conv map's positions and changes what the pooling sees.
+            No effect on ResNet.
         whiten: Divide each PCA direction by its standard deviation. Radenović et al.
             call this "essential" for off-the-shelf CNN descriptors and apply it to
             every such row they publish, so their numbers are not comparable without
@@ -117,6 +120,7 @@ class PooledConfig:
     scales: tuple[float, ...] = (1.0,)
     dim: int | None = None
     weights: WeightSource = "torchvision"
+    last_pool: bool = True
     whiten: bool = False
     whiten_source: WhitenSource = "held_out"
     shrinkage: float = 0.0
@@ -174,6 +178,9 @@ class RMACConfig:
         weights: Whose ImageNet training filled the architecture. The reference
             implementation uses Caffe-converted weights rather than torchvision's, and
             they are numerically different networks — a manual download, see weights.py.
+        last_pool: Keep VGG's and AlexNet's trailing max-pool. The reference drops it,
+            which quadruples the conv map's positions and changes what the pooling sees.
+            No effect on ResNet.
         whiten: PCA-whiten the finished descriptor. The paper whitens each region
             vector instead, with a projection learned on a separate landmark set —
             see `descriptors/cnn/rmac.py` for why that is not what happens here.
@@ -194,6 +201,7 @@ class RMACConfig:
     scales: tuple[float, ...] = (1.0,)
     dim: int | None = None
     weights: WeightSource = "torchvision"
+    last_pool: bool = True
     whiten: bool = False
     whiten_source: WhitenSource = "held_out"
     shrinkage: float = 0.0
@@ -213,7 +221,12 @@ class RMACConfig:
 
     def train_and_encode(self, inputs: EvalImages) -> Encoded:
         model = RMAC(
-            self.backbone, levels=self.levels, max_side=self.max_side, scales=self.scales, weights=self.weights
+            self.backbone,
+            levels=self.levels,
+            max_side=self.max_side,
+            scales=self.scales,
+            weights=self.weights,
+            last_pool=self.last_pool,
         )
 
         database_vectors = model.extract(iter_images(inputs.database_paths))

@@ -92,6 +92,7 @@ class PooledCNN:
         max_side: int = 1024,
         scales: tuple[float, ...] = (1.0,),
         weights: WeightSource = "torchvision",
+        last_pool: bool = True,
         device: str | None = None,
     ) -> None:
         if not scales:
@@ -103,28 +104,37 @@ class PooledCNN:
         self.max_side = max_side
         self.scales = scales
         self.weights = weights
+        self.last_pool = last_pool
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        self._model = self._build(backbone, weights).to(self.device).eval()
+        self._model = self._build(backbone, weights, last_pool).to(self.device).eval()
 
     @staticmethod
-    def _build(backbone: Backbone, weights: WeightSource = "torchvision") -> torch.nn.Module:
+    def _build(backbone: Backbone, weights: WeightSource = "torchvision", last_pool: bool = True) -> torch.nn.Module:
         """Everything up to and including the last conv block, classifier discarded.
 
         `weights` selects whose ImageNet training filled it. The reference implementation
         uses Caffe-converted weights rather than torchvision's, and they are numerically
         different networks — see `weights.py`.
+
+        `last_pool` keeps VGG's and AlexNet's trailing max-pool. The reference drops it
+        (`features[:-1]`), which quadruples the conv map's positions and so changes what
+        every pooling is computed over. ResNet has no trailing pool once the classifier
+        is removed, so the flag does nothing there — and dropping a layer that carries no
+        weights leaves the checkpoint mapping unchanged either way.
         """
         import torchvision.models as tv
 
         if weights == "caffe":
-            return load_caffe(PooledCNN._build(backbone, "torchvision"), backbone)
+            return load_caffe(PooledCNN._build(backbone, "torchvision", last_pool), backbone)
 
         match backbone:
             case "alexnet":
-                return tv.alexnet(weights=tv.AlexNet_Weights.IMAGENET1K_V1).features
+                features = tv.alexnet(weights=tv.AlexNet_Weights.IMAGENET1K_V1).features
+                return features if last_pool else torch.nn.Sequential(*list(features.children())[:-1])
             case "vgg16" | "vgg19":
                 builder = getattr(tv, backbone)
-                return builder(weights=getattr(tv, f"{backbone.upper()}_Weights").IMAGENET1K_V1).features
+                features = builder(weights=getattr(tv, f"{backbone.upper()}_Weights").IMAGENET1K_V1).features
+                return features if last_pool else torch.nn.Sequential(*list(features.children())[:-1])
             case "resnet18" | "resnet34" | "resnet50" | "resnet101":
                 # Same surgery for every depth; only the constructor and weights differ.
                 builder = getattr(tv, backbone)

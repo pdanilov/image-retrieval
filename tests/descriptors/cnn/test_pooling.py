@@ -257,3 +257,27 @@ def test_every_backbone_has_a_minimum_side():
 
     for name in get_args(PoolBackbone):
         assert name in MIN_SIDE and name in CHANNELS
+
+
+def test_last_pool_quadruples_the_positions_pooled_over():
+    # The reference builds VGG as features[:-1]; we kept the trailing max-pool. That is
+    # 4x the positions, which changes what every pooling is computed over.
+    kept = PooledCNN("vgg16", last_pool=True, device="cpu")
+    dropped = PooledCNN("vgg16", last_pool=False, device="cpu")
+    with torch.inference_mode():
+        a = kept._model(torch.zeros(1, 3, 256, 256))
+        b = dropped._model(torch.zeros(1, 3, 256, 256))
+    assert b.shape[-1] == a.shape[-1] * 2 and b.shape[-2] == a.shape[-2] * 2
+
+
+def test_last_pool_defaults_to_kept():
+    # Every VGG and AlexNet row recorded so far includes the trailing pool.
+    assert PooledCNN("vgg16", device="cpu").last_pool is True
+
+
+def test_last_pool_does_nothing_to_resnet():
+    # children()[:-2] already ends at layer4; there is no trailing pool to drop, and the
+    # flag must not silently remove a conv block instead.
+    a = PooledCNN("resnet18", last_pool=True, device="cpu")
+    b = PooledCNN("resnet18", last_pool=False, device="cpu")
+    assert len(list(a._model.children())) == len(list(b._model.children()))
