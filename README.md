@@ -202,7 +202,8 @@ Both differences pushed the same way.
 PCA-whitens each *region* vector before summing them, while ours whitens the finished
 descriptor. Whitening after the sum cannot undo the correlation the sum compounded.
 Closing it needs a projection fitted on region vectors — permitted by the cross-dataset
-rule, just not built.
+rule, but deliberately not built: the cause is identified and the row is annotated, which
+is worth more than a closed gap whose closing taught nothing.
 
 ### VGG's trailing max-pool
 
@@ -388,7 +389,11 @@ GeM, which reuses its own generalized mean (Radenović et al., §Multi-scale) �
 28.5, 26.2 for `p` = 1, 2, 3, 4, 5, 10 — the 3–5 span sits inside 0.8, unresolvable at
 one seed. Hard rises monotonically with `p` to true max.
 
-Caveats: single seed throughout, roxford5k only (the rparis6k direction is unrun). Input
-is capped at `max_side=1024` and never enlarged, except that
+Caveats: single seed throughout, and **roxford5k only** — every number here evaluates on
+roxford5k with rparis6k as the held-out set, and the reverse direction was deliberately
+not run. Nothing here is evidence that a conclusion generalizes to the second benchmark,
+and the published tables score rparis6k considerably higher (R–[37]–GeM: 64.7 ROxf
+against 77.2 RPar), so these numbers are the harder half of the usual pair rather than a
+representative sample of it. Input is capped at `max_side=1024` and never enlarged, except that
 scaled inputs are floored at each backbone's conv-stack minimum (63 px AlexNet, 32 px
 elsewhere), which can only trigger below full scale.
