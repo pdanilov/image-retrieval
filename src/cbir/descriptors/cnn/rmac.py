@@ -84,6 +84,10 @@ class RMAC(PooledCNN):
     def __init__(self, backbone: Backbone = "alexnet", *, levels: int = 3, **kwargs) -> None:
         if levels < 1:
             raise ValueError(f"levels must be at least 1, got {levels}")
+        # Caught here rather than in the base class, whose message is about `p` -- a
+        # parameter R-MAC does not have. Only GeM checkpoints were ever published.
+        if kwargs.get("weights") == "sfm120k":
+            raise ValueError("no fine-tuned R-MAC checkpoint was published; sfm120k is GeM only")
         super().__init__(backbone, p=None, **kwargs)
         self.levels = levels
 

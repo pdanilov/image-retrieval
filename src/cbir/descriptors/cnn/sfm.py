@@ -21,8 +21,15 @@ import pickle
 from pathlib import Path
 from typing import Literal
 
-WhitenSource = Literal["held_out", "sfm30k", "sfm120k"]
-"""Where a run's whitening projection is fitted. `held_out` is the sibling benchmark."""
+WhitenSource = Literal["held_out", "sfm30k", "sfm120k", "learned"]
+"""Where a run's whitening projection comes from.
+
+`held_out` is the sibling benchmark and `sfm30k`/`sfm120k` are the landmark corpora --
+all three are *fitted* here, unsupervised, from the images this module supplies.
+`learned` is the odd one out: a supervised projection shipped inside a fine-tuned
+checkpoint, estimated from labelled matching pairs, needing no images at all. It is
+listed here anyway so that one field answers "where did the projection come from" for
+every row in the table."""
 
 PKL = {"sfm30k": "retrieval-SfM-30k-whiten.pkl", "sfm120k": "retrieval-SfM-120k-whiten.pkl"}
 
@@ -45,6 +52,8 @@ def whitening_paths(source: WhitenSource) -> list[str]:
     """Image paths for one whitening corpus, in the order the release lists them."""
     if source == "held_out":
         raise ValueError("held_out draws its paths from the eval split, not from here")
+    if source == "learned":
+        raise ValueError("learned whitening ships inside the checkpoint; it is not fitted on any corpus")
 
     manifest = root() / PKL[source]
     if not manifest.exists():

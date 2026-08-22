@@ -17,7 +17,7 @@ from cbir.data.images import iter_images
 from cbir.descriptors.cnn.compression import PCACompression
 from cbir.descriptors.cnn.neural_codes import DIM as NEURAL_CODES_DIM
 from cbir.descriptors.cnn.neural_codes import Backbone, NeuralCodes
-from cbir.descriptors.cnn.pooling import CHANNELS, PooledCNN
+from cbir.descriptors.cnn.pooling import CHANNELS, Exponent, PooledCNN
 from cbir.descriptors.cnn.pooling import Backbone as PoolBackbone
 from cbir.descriptors.cnn.prepare import EvalImages, prepare_image_inputs
 from cbir.descriptors.cnn.rmac import RMAC
@@ -83,7 +83,8 @@ class PooledConfig:
     Args:
         backbone: Frozen ImageNet network whose last conv map is pooled.
         p: Generalized-mean exponent. `1.0` = SPoC (average), `None` = MAC (max),
-            `3.0` = the GeM default from Radenović et al.
+            `3.0` = the GeM default from Radenović et al., `"learned"` = the value the
+            fine-tuned checkpoint was trained with, which only `weights="sfm120k"` has.
         max_side: Longest image side fed to the network. Caps only, never enlarges.
         scales: Input resolutions each image is described at, as factors of the capped
             size; the per-scale descriptors are L2-normalized and averaged. The default
@@ -93,9 +94,11 @@ class PooledConfig:
             native width, which is already compact — with `whiten` on that still means
             a PCA is fitted, at full width, since whitening is a rotation and rescale
             rather than a compression.
-        weights: Whose ImageNet training filled the architecture. The reference
-            implementation uses Caffe-converted weights rather than torchvision's, and
-            they are numerically different networks — a manual download, see weights.py.
+        weights: Where the weights come from. `torchvision` and `caffe` are both frozen
+            ImageNet classifiers — numerically different networks, and the reference uses
+            the latter. `sfm120k` is fine-tuned for retrieval itself and brings its own
+            `p` and whitening; it requires `p="learned"`. All non-default sources are
+            manual downloads — see weights.py and finetuned.py.
         last_pool: Keep VGG's and AlexNet's trailing max-pool. The reference drops it,
             which quadruples the conv map's positions and changes what the pooling sees.
             No effect on ResNet.
@@ -105,8 +108,10 @@ class PooledConfig:
             it. Off by default so that a run says which it was.
         whiten_source: Which corpus the whitening is fitted on. `held_out` is the
             sibling benchmark (6322 images); `sfm30k`/`sfm120k` are the retrieval-SfM
-            landmark sets the reference uses, which need a manual download. Recorded so
-            a row always says where its projection came from.
+            landmark sets the reference uses, which need a manual download; `learned` is
+            the supervised projection shipped inside a fine-tuned checkpoint, fitted on
+            SfM matching pairs rather than on unlabelled images, and fits nothing here at
+            all. Recorded so a row always says where its projection came from.
         shrinkage: Floors whitening's divisor at `sqrt(lambda + eps)`, `eps` being this
             fraction of the mean eigenvalue. Only whitening reads it. Whitening is
             unstable when the held-out set is not much larger than the descriptor width,
@@ -115,7 +120,7 @@ class PooledConfig:
     """
 
     backbone: PoolBackbone = "alexnet"
-    p: float | None = 3.0
+    p: Exponent = 3.0
     max_side: int = 1024
     scales: tuple[float, ...] = (1.0,)
     dim: int | None = None
@@ -128,6 +133,21 @@ class PooledConfig:
 
     technique: ClassVar[str] = "gem"
     inputs_kind: ClassVar[str] = "images"
+
+    def __post_init__(self) -> None:
+        # Rejected here rather than deep in the run: these combinations describe an
+        # experiment that does not exist, and the cost of finding out at extraction time
+        # is an hour of GPU. `PooledCNN` re-checks the first of them, since it is a
+        # statement about the network and not about this config.
+        if (self.p == "learned") != (self.weights == "sfm120k"):
+            raise ValueError(f"p='learned' and weights='sfm120k' go together; got p={self.p!r}, {self.weights=}")
+        if self.whiten_source == "learned":
+            if self.weights != "sfm120k":
+                raise ValueError("whiten_source='learned' needs a fine-tuned checkpoint to read it from")
+            if not self.whiten:
+                raise ValueError("whiten_source='learned' with whiten=False would fit nothing and apply nothing")
+            if self.shrinkage:
+                raise ValueError("shrinkage regularizes a PCA fit; the learned projection is not fitted here")
 
     def prepare(self, dataset: EvalDataset) -> EvalImages:
         return prepare_image_inputs(dataset)
@@ -154,6 +174,13 @@ class PooledConfig:
             for image, box in zip(iter_images(inputs.query_paths), inputs.query_boxes, strict=True)
         )
         query_vectors = model.extract(cropped)
+
+        if self.whiten_source == "learned":
+            # Nothing is fitted: the checkpoint carries a projection already estimated on
+            # SfM matching pairs, so there is no third pass through the network.
+            assert model.finetuned is not None  # guaranteed by __post_init__
+            learned = model.finetuned.whitening(self.scales, self.dim)
+            return learned.transform(database_vectors), learned.transform(query_vectors)
 
         if self.dim is None and not self.whiten:
             return database_vectors, query_vectors
@@ -216,6 +243,12 @@ class RMACConfig:
 
     technique: ClassVar[str] = "rmac"
     inputs_kind: ClassVar[str] = "images"
+
+    def __post_init__(self) -> None:
+        # Only GeM checkpoints were published, so neither the fine-tuned weights nor the
+        # projection that ships with them has an R-MAC counterpart.
+        if self.weights == "sfm120k" or self.whiten_source == "learned":
+            raise ValueError("no fine-tuned R-MAC checkpoint was published; sfm120k is GeM only")
 
     def prepare(self, dataset: EvalDataset) -> EvalImages:
         return prepare_image_inputs(dataset)

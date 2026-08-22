@@ -21,8 +21,13 @@ from typing import Literal
 
 import torch
 
-WeightSource = Literal["torchvision", "caffe"]
-"""Which ImageNet weights fill the architecture."""
+WeightSource = Literal["torchvision", "caffe", "sfm120k"]
+"""Where the architecture's weights come from.
+
+`torchvision` and `caffe` are both frozen ImageNet classifiers, differing only in whose
+training run produced them. `sfm120k` is a different kind of thing: fine-tuned for
+retrieval itself, and carrying its own pooling exponent and whitening — see
+`finetuned.py`."""
 
 CAFFE_URL = "https://cmp.felk.cvut.cz/cnnimageretrieval/data/networks/imagenet"
 CAFFE_FILES = {
@@ -48,10 +53,22 @@ def load_caffe(model: torch.nn.Module, backbone: str) -> torch.nn.Module:
         raise FileNotFoundError(f"{path} not found — download it from {CAFFE_URL}/{CAFFE_FILES[backbone]}")
 
     state = torch.load(path, map_location="cpu", weights_only=True)
+    return apply_state(model, state, source=path.name, backbone=backbone)
+
+
+def apply_state(
+    model: torch.nn.Module, state: dict[str, torch.Tensor], *, source: str, backbone: str
+) -> torch.nn.Module:
+    """Load `state` into `model`, tolerating only the buffers these files never carry.
+
+    Both the Caffe and the fine-tuned checkpoints omit `num_batches_tracked`, which only
+    ever updates running statistics during training. Anything *else* absent would mean
+    the file does not describe this architecture, and the run would otherwise proceed on
+    a half-initialized network without failing — which is the one failure mode that
+    produces a plausible-looking wrong number.
+    """
     missing, unexpected = model.load_state_dict(state, strict=False)
-    # Anything else absent would mean the file does not describe this architecture, and
-    # the run would proceed on a half-initialized network without failing.
     unknown = [k for k in missing if not k.endswith("num_batches_tracked")]
     if unknown or unexpected:
-        raise ValueError(f"{path.name} does not match {backbone}: missing {unknown[:3]}, unexpected {unexpected[:3]}")
+        raise ValueError(f"{source} does not match {backbone}: missing {unknown[:3]}, unexpected {unexpected[:3]}")
     return model

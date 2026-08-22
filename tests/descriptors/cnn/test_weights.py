@@ -30,13 +30,13 @@ def test_a_mismatched_file_is_rejected_rather_than_half_loaded(monkeypatch, tmp_
     torch.save({"nonsense.weight": torch.zeros(2, 2)}, path)
 
     with pytest.raises(ValueError, match="does not match resnet50"):
-        weights.load_caffe(PooledCNN._build("resnet50"), "resnet50")
+        weights.load_caffe(PooledCNN._build("resnet50")[0], "resnet50")
 
 
 def test_only_num_batches_tracked_may_be_absent(monkeypatch, tmp_path):
     # The published files omit exactly those buffers, which matter only while training.
     monkeypatch.setenv("CBIR_WEIGHTS_ROOT", str(tmp_path))
-    model = PooledCNN._build("resnet50")
+    model, _ = PooledCNN._build("resnet50")
     state = {k: v for k, v in model.state_dict().items() if not k.endswith("num_batches_tracked")}
     torch.save(state, tmp_path / weights.CAFFE_FILES["resnet50"])
 

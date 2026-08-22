@@ -32,10 +32,19 @@ import torch
 from PIL.Image import Image as PILImage
 
 from cbir.descriptors.classic.normalization import safe_l2_normalize
+from cbir.descriptors.cnn.finetuned import FineTuned
+from cbir.descriptors.cnn.finetuned import load_into as load_finetuned
 from cbir.descriptors.cnn.neural_codes import IMAGENET_MEAN, IMAGENET_STD
 from cbir.descriptors.cnn.weights import WeightSource, load_caffe
 
 Backbone = Literal["alexnet", "vgg16", "vgg19", "resnet18", "resnet34", "resnet50", "resnet101"]
+
+Exponent = float | Literal["learned"] | None
+"""Generalized-mean exponent: a number, `None` for true max, or the value the fine-tuned
+checkpoint was trained with. `"learned"` is spelled out rather than implied by
+`weights="sfm120k"` so that the row records which pooling produced it, and so that a
+config asking for both a trained network and a hand-picked exponent fails instead of
+quietly dropping one of them."""
 
 CHANNELS: dict[str, int] = {
     "alexnet": 256,
@@ -88,7 +97,7 @@ class PooledCNN:
         self,
         backbone: Backbone = "alexnet",
         *,
-        p: float | None = 3.0,
+        p: Exponent = 3.0,
         max_side: int = 1024,
         scales: tuple[float, ...] = (1.0,),
         weights: WeightSource = "torchvision",
@@ -99,18 +108,34 @@ class PooledCNN:
             raise ValueError("scales must not be empty")
         if any(s <= 0 for s in scales):
             raise ValueError(f"scales must all be positive, got {scales}")
+        if (p == "learned") != (weights == "sfm120k"):
+            raise ValueError(f"p='learned' and weights='sfm120k' go together; got p={p!r}, weights={weights!r}")
+        # The checkpoint was trained on `features[:-1]`, so keeping the pool would run
+        # fine-tuned weights over a conv map a quarter the size of the one they saw.
+        if weights == "sfm120k" and last_pool and backbone.startswith("vgg"):
+            raise ValueError("the sfm120k checkpoints were fine-tuned without the trailing pool; pass last_pool=False")
         self.backbone = backbone
-        self.p = p
         self.max_side = max_side
         self.scales = scales
         self.weights = weights
         self.last_pool = last_pool
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        self._model = self._build(backbone, weights, last_pool).to(self.device).eval()
+
+        model, self.finetuned = self._build(backbone, weights, last_pool)
+        self._model = model.to(self.device).eval()
+        # The trained exponent replaces the requested one only on the path that has one;
+        # `self.p` is what pooling reads, so nothing downstream needs to know which.
+        self.p = self.finetuned.p if self.finetuned is not None else p
 
     @staticmethod
-    def _build(backbone: Backbone, weights: WeightSource = "torchvision", last_pool: bool = True) -> torch.nn.Module:
+    def _build(
+        backbone: Backbone, weights: WeightSource = "torchvision", last_pool: bool = True
+    ) -> tuple[torch.nn.Module, FineTuned | None]:
         """Everything up to and including the last conv block, classifier discarded.
+
+        Returns the module and, on the fine-tuned path, the rest of that checkpoint —
+        its trained exponent and whitening, which the caller needs and which nothing but
+        the checkpoint can supply.
 
         `weights` selects whose ImageNet training filled it. The reference implementation
         uses Caffe-converted weights rather than torchvision's, and they are numerically
@@ -124,24 +149,30 @@ class PooledCNN:
         """
         import torchvision.models as tv
 
+        # Both alternative sources fill the torchvision architecture rather than
+        # defining their own, so each builds the stock one first and overwrites it.
         if weights == "caffe":
-            return load_caffe(PooledCNN._build(backbone, "torchvision", last_pool), backbone)
+            architecture, _ = PooledCNN._build(backbone, "torchvision", last_pool)
+            return load_caffe(architecture, backbone), None
+        if weights == "sfm120k":
+            architecture, _ = PooledCNN._build(backbone, "torchvision", last_pool)
+            return load_finetuned(architecture, backbone)
 
         match backbone:
             case "alexnet":
                 features = tv.alexnet(weights=tv.AlexNet_Weights.IMAGENET1K_V1).features
-                return features if last_pool else torch.nn.Sequential(*list(features.children())[:-1])
+                return (features if last_pool else torch.nn.Sequential(*list(features.children())[:-1])), None
             case "vgg16" | "vgg19":
                 builder = getattr(tv, backbone)
                 features = builder(weights=getattr(tv, f"{backbone.upper()}_Weights").IMAGENET1K_V1).features
-                return features if last_pool else torch.nn.Sequential(*list(features.children())[:-1])
+                return (features if last_pool else torch.nn.Sequential(*list(features.children())[:-1])), None
             case "resnet18" | "resnet34" | "resnet50" | "resnet101":
                 # Same surgery for every depth; only the constructor and weights differ.
                 builder = getattr(tv, backbone)
                 weights = getattr(tv, f"ResNet{backbone.removeprefix('resnet')}_Weights").IMAGENET1K_V1
                 model = builder(weights=weights)
                 # Drop avgpool and fc; children()[:-2] ends at layer4's output.
-                return torch.nn.Sequential(*list(model.children())[:-2])
+                return torch.nn.Sequential(*list(model.children())[:-2]), None
             case _:
                 raise ValueError(f"unknown backbone {backbone!r}")
 
