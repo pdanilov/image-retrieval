@@ -139,81 +139,121 @@ was run with WSL at 64 GB. Below k=2048 the default 48 GB is fine.
 
 ## CNN-tier results
 
-Six frozen ImageNet backbones, none fine-tuned: AlexNet, VGG16/19, ResNet18/34/50/101.
-The backbone matters more than anything else in this tier, so every row names one and no
-number here should be quoted without it.
-
-Same protocol as the classic tier: roxford5k, anything fitted is fitted on rparis6k,
-seed 0, mAP ×100, queries bbx-cropped, multi-scale at the three published scales
-(1, 1/√2, 1/2).
+Frozen ImageNet backbones, none fine-tuned. Same protocol as the classic tier:
+roxford5k, anything fitted is fitted on rparis6k, seed 0, mAP ×100, queries bbx-cropped,
+multi-scale at the three published scales (1, 1/√2, 1/2).
 
 ```
-uv run cbir evaluate --dataset roxford5k neural-codes --backbone vgg16 --dim None
-uv run cbir evaluate --dataset roxford5k gem  --backbone vgg16 --p 3.0 \
-    --scales 1.0 0.7071067811865476 0.5 --dim 512 --whiten
-uv run cbir evaluate --dataset roxford5k rmac --backbone resnet50 --levels 3 \
-    --scales 1.0 0.7071067811865476 0.5 --dim 2048 --whiten --shrinkage 0.01
+uv run cbir evaluate --dataset roxford5k gem  --backbone resnet101 --p 3.0 \
+    --scales 1.0 0.7071067811865476 0.5 --dim 2048 --whiten --weights caffe
+uv run cbir evaluate --dataset roxford5k rmac --backbone resnet101 --levels 3 \
+    --scales 1.0 0.7071067811865476 0.5 --dim 2048 --whiten --weights caffe
 ```
 
-### Pooled descriptors, all backbones
+### Weight provenance is not a detail
 
-Whitened at native width, which is the configuration the reference table uses. The
-2048-D rows additionally use `--shrinkage 0.01` (see below); the 512-D rows do not,
-because it was measured at +0.1 there.
+"ImageNet-pretrained ResNet101" is not one object. `cnnimageretrieval` builds a
+torchvision architecture and fills it with **Caffe-converted** ImageNet weights; we
+started with torchvision's. Same architecture, same dataset, same task, different
+training recipe — and the descriptors agree at cosine 0.23.
+
+| GeM `p=3` | torchvision | caffe | Δ |
+|---|---:|---:|---:|
+| **ResNet101** | 34.7 | **46.1** | **+11.4** |
+| ResNet50 | 40.8 | 42.5 | +1.7 |
+| VGG16 | 42.0 | 40.6 | −1.4 |
+
+It is architecture-specific, not a blanket improvement: torchvision's ResNet101 simply
+transfers to retrieval far worse than its ResNet50, and on VGG16 the Caffe weights are
+slightly *worse*. MAC is affected most (+16.2 on ResNet101, +8.0 on ResNet50), which
+fits the measured difference in the features — Caffe's final conv map is **96% zeros at
+std 0.72** against torchvision's **75% at 0.33**, a sparser, higher-contrast
+representation where a max picks a real peak rather than diffuse activation.
+
+The 53× difference in conv1 weight scale is *not* the cause: BatchNorm follows conv1 and
+its `running_var` ratio (3392) matches that scale squared (2819), so it divides straight
+back out. Nor is it channel order — per-filter matching is worse under BGR than RGB. The
+two networks simply learned different features.
+
+This cost six wrong hypotheses. Every one assumed the backbone was a fixed input and
+looked for the bug downstream; the published table disagreeing with our measurement was
+pointing at the input the whole time.
+
+### Validation against the reference table
+
+Radenović et al. ([1803.11285](https://arxiv.org/abs/1803.11285), Table 5), matching
+their configuration — their weights, their truncation:
+
+| method | backbone | ours | published | |
+|---|---|---:|---:|---|
+| GeM `p=3` | VGG16 | 40.5 / 15.5 | 40.5 / 15.7 | exact |
+| GeM `p=3` | ResNet101 | 46.1 / 18.6 | 45.0 / 17.7 | above |
+| MAC | ResNet101 | 42.7 / 17.2 | 41.7 / 18.0 | above |
+| MAC | AlexNet | 27.6 / 9.0 | 28.3 / 8.8 | −0.7 |
+| R-MAC | ResNet101 | 46.5 / 14.2 | 49.8 / 18.5 | **−3.2** |
+
+**VGG16 reproduces exactly** once the configuration matches. Our earlier 42.0 was not a
+better reproduction — it was a *different* configuration (torchvision weights, trailing
+max-pool kept) that happens to score 1.5 higher than the method it was compared against.
+Both differences pushed the same way.
+
+**R-MAC is the one row still short, with an identified cause**: the published method
+PCA-whitens each *region* vector before summing them, while ours whitens the finished
+descriptor. Whitening after the sum cannot undo the correlation the sum compounded.
+Closing it needs a projection fitted on region vectors — permitted by the cross-dataset
+rule, just not built.
+
+### VGG's trailing max-pool
+
+The reference builds VGG as `features[:-1]`, dropping the final max-pool; we kept it.
+That is 4× the positions on the conv map — 64×64 against 32×32 at `max_side=1024`.
+
+| vgg16 GeM `p=3` | pool kept | pool dropped |
+|---|---:|---:|
+| torchvision weights | 42.0 / 15.6 | 41.6 / **16.7** |
+| caffe weights | 40.6 / 15.4 | 40.5 / 15.5 |
+
+Small on Medium, but dropping it is worth **+1.1 Hard** on torchvision weights — more
+positions to pool over helps most where the object is small or partly occluded.
+
+### The full grid
+
+All backbones on **torchvision** weights, whitened at native width, so the columns are
+comparable to each other. The two ResNet rows that Caffe weights change materially are
+noted underneath.
 
 | backbone | dim | SPoC | MAC | GeM `p=3` | R-MAC |
 |---|---:|---|---|---|---|
-| AlexNet¹ | 256 | 21.0 / 2.5 | 27.6 / **9.0** | 27.9 / 7.2 | 24.4 / 4.1 |
+| AlexNet¹ | 256 | 21.0 / 2.5 | 27.6 / 9.0 | 27.9 / 7.2 | 24.4 / 4.1 |
 | VGG16 | 512 | 37.2 / 10.9 | 34.9 / 13.7 | **42.0** / 15.6 | 34.4 / 7.3 |
 | VGG19 | 512 | 34.7 / 10.0 | 34.6 / 15.1 | 40.0 / **18.4** | 33.6 / 6.5 |
 | ResNet18 | 512 | 32.3 / 6.3 | 22.6 / 7.0 | 28.2 / 8.1 | 31.3 / 5.1 |
 | ResNet34 | 512 | 32.4 / 5.9 | 24.3 / 6.5 | 29.8 / 6.8 | 33.6 / 6.7 |
-| **ResNet50** | 2048 | 42.9 / 14.2 | 32.2 / 11.1 | 40.8 / 14.0 | **45.1** / 12.7 |
-| ResNet101 | 2048 | 37.6 / 10.6 | 26.5 / 6.7 | 34.7 / 10.8 | 42.8 / 11.1 |
+| ResNet50 | 2048 | 42.9 / 14.2 | 32.2 / 11.1 | 40.8 / 14.0 | 45.1 / 12.7 |
+| ResNet101 | 2048 | 38.1 / 10.2 | 26.5 / 6.7 | 34.7 / 10.8 | 42.8 / 11.1 |
+| **ResNet101 (caffe)** | 2048 | 41.9 / 13.6 | 42.7 / 17.2 | 46.1 / **18.6** | **46.5** / 14.2 |
+| *(VLAD k=4096, classic)* | *524288* | | | *38.5 / 19.5* | |
 
-¹ AlexNet rows are unwhitened — whitening *costs* mAP at 256-D (see below).
+¹ AlexNet unwhitened — whitening costs mAP at 256-D.
 
-**Best overall: ResNet50 R-MAC at 45.1 Medium**, from a 2048-D vector. For scale, the
-classic tier's best is VLAD k=4096 at 38.5 Medium from a 524288-D vector — 256× longer.
-Hard is the one protocol the classic tier still wins: VLAD 19.5 against VGG19 GeM's 18.4.
+**Best: ResNet101 R-MAC 46.5 Medium** from 2048 dimensions, against the classic tier's
+best of VLAD k=4096 at 38.5 from **524288**. Hard is now close too — 18.6 against VLAD's
+19.5, where it used to be a rout.
 
-**Which pooling wins depends on the backbone, and the split is systematic.** On VGG, GeM
-leads and MAC is mid-table. On both ResNets, the sum-like poolings (R-MAC, SPoC) lead and
-**MAC is worst on every ResNet**, by 8–13 mAP. ResNet's final block is post-BatchNorm with
-sparser activations, so one max per channel captures much less than a sum over positions.
+**Which pooling wins is backbone-dependent.** GeM leads on VGG; the sum-like poolings
+lead on the torchvision ResNets. Note the earlier claim that "MAC is worst on every
+ResNet" was an artifact of the wrong weights: on Caffe ResNet101 it is second-best and
+has the tier's second-best Hard.
 
-### Validation against the reference table
+**Depth buys little at fixed width.** ResNet18 → ResNet34 gains ~1.7 averaged over
+methods; VGG16 → VGG19 loses Medium and gains Hard. The 512 → 2048 width jump is worth
+far more, and weight provenance more than either.
 
-Radenović et al. ([1803.11285](https://arxiv.org/abs/1803.11285), Table 5) publish
-off-the-shelf rows for AlexNet, VGG and ResNet101.
+### Whitening
 
-| method | backbone | ours | published | Δ |
-|---|---|---:|---:|---|
-| GeM `p=3` | VGG16 | 42.0 | 40.5 | **+1.5** |
-| SPoC | VGG16 | 37.2 | 38.0 | −0.8 |
-| MAC | VGG16 | 34.9 | 37.8 | −2.9 |
-| MAC | AlexNet | 27.6 | 28.3 | −0.7 |
-| R-MAC | VGG16 | 34.4 | 42.5 | −8.1 |
-| GeM `p=3` | AlexNet | 27.9 | 33.8 | −5.9 |
-| **GeM `p=3`** | **ResNet101** | **34.7** | **45.0** | **−10.3** |
-| **R-MAC** | **ResNet101** | **42.8** | **49.8** | **−7.0** |
-| **MAC** | **ResNet101** | **26.5** | **41.7** | **−15.2** |
-
-**VGG reproduces; ResNet101 does not.** Three VGG rows land within 0.8–2.9 and GeM
-exceeds its reference, which is the agreement that licenses trusting an implementation
-written from the papers. ResNet101 misses all three by 7–15, and — the clearer symptom —
-**ResNet50 beats ResNet101 on all four methods**, by 2.3 to 6.1, while the published table
-has the deeper network ahead. That inversion is treated here as an unresolved defect in
-the ResNet path, not as a finding about depth. Four hypotheses have been tested and
-rejected: PCA conditioning, fitting-set size, whitening shrinkage, and compressing before
-whitening. **Do not read the ResNet101 row as a measurement of ResNet101.**
-
-R-MAC's VGG shortfall has an identified cause instead: the published method PCA-whitens
-each *region* vector before summing, while ours whitens the finished descriptor. Fixing it
-needs a projection fitted on region vectors — allowed by the cross-dataset rule, just not
-built.
-
-### Whitening, and when it hurts
+Fitted on the held-out benchmark unless a row says otherwise. Gains sort by how much a
+method **sums** rather than **maxes** — summing piles up shared components and whitening
+decorrelates them, while a max creates no such correlation.
 
 | VGG16, multi-scale | plain | + whitening | gain |
 |---|---:|---:|---:|
@@ -222,41 +262,21 @@ built.
 | GeM `p=3` | 36.4 | 42.0 | +5.6 |
 | MAC | 32.0 | 34.9 | +2.9 |
 
-Gains sort by how much a method **sums** rather than **maxes** — summing piles up shared
-components and whitening is what decorrelates them, while a max creates no such
-correlation.
+It reverses on AlexNet, where whitening costs MAC 3.3 mAP (22.9 → 19.6 single-scale) —
+at 256-D there is little redundancy to remove and a proportionally noisier tail. Worth
+measuring per backbone rather than assuming.
 
-**It reverses on AlexNet**, where whitening costs MAC 3.3 mAP (22.9 → 19.6 single-scale).
-At 256-D there is little redundancy to remove, and whitening amplifies a proportionally
-noisier tail. On AlexNet the full decomposition is: mean-centering alone −2.7, compressing
-256→128 a further −1.7, whitening then +2.9. So it is worth measuring per backbone rather
-than assuming.
+**`--shrinkage ε`** floors whitening's divisor at `sqrt(λ + ε·mean(λ))`. Whitening
+divides by `sqrt(λ)`, and when the fitting set is not much larger than the descriptor the
+smallest eigenvalues are noise. At 2048 components fitted on 2100 images the pipeline
+scores **6.7** unshrunk and **39.3** at ε=0.1. In the regime we actually run (6322
+images) it is worth +0.4 to +1.0 on the 2048-D backbones and +0.1 on VGG16 at 512-D.
 
-### Shrinkage
-
-`--shrinkage ε` floors whitening's divisor at `sqrt(λ + ε·mean(λ))`. Whitening divides by
-`sqrt(λ)`, and when the fitting set is not much larger than the descriptor, the smallest
-eigenvalues are estimated from almost nothing — dividing by them amplifies pure noise.
-Our 6322 held-out images give 12:1 samples-to-dimensions at 512-D but only **3:1 at
-2048-D**.
-
-Measured on ResNet50 GeM, fitting the PCA on subsets of the held-out set:
-
-| ε | fit on 2100 images | fit on 6322 |
-|---|---:|---:|
-| 0 | **6.7** | 40.2 |
-| 0.01 | 38.4 | **40.8** |
-| 0.1 | 39.3 | 39.9 |
-
-Unshrunk whitening collapses entirely as the sample count approaches the dimension.
-Shrinkage removes almost all of that dependence — 2100 images gets within 1.5 mAP of 6322
-— which also means the fitting-set size is **not** the binding constraint it appears to be
-without regularization. In the regime we actually run, the gain is smaller and orders by
-conditioning: +0.4 to +1.0 on the 2048-D backbones against **+0.1 on VGG16 at 512-D**,
-which is why only the 2048-D rows use it.
-
-This is our fix, not the reference's method: theirs is fitted on ~120k landmark images,
-where the instability does not arise. Off by default, recorded in `params`.
+**`--whiten-source sfm30k|sfm120k`** fits whitening on the retrieval-SfM landmark corpus
+the reference uses (a 37.7 GB manual download; see `descriptors/cnn/sfm.py`). Worth +2.3
+Medium on *torchvision* ResNet101 — but once the weights are right it stops helping
+(46.1 → 45.3), so that gain was whitening compensating for weak features. It saturates
+by ~30k images: 30k and 120k differ by 0.2.
 
 ### Neural Codes
 
@@ -267,29 +287,22 @@ where the instability does not arise. Off by default, recorded in `params`.
 | VGG16 fc6 | 4096 | 16.3 | 5.1 |
 | VGG16 fc6 + PCA | 512 | 15.4 | 5.0 |
 
-Losing to everything else is the expected result. Babenko et al.
+Losing to everything else is expected. Babenko et al.
 ([1404.1777](https://arxiv.org/abs/1404.1777)) report the same ordering for codes off an
 ILSVRC-trained network — their contribution is that *retraining* on a landmark set fixes
-it, and this harness runs frozen networks only. An fc6 activation was trained to be
-invariant to exactly the object identity a landmark search must discriminate. There is no
-ROxford reference for the method, so these rows compare only against our own.
+it, and this harness runs frozen networks only. There is no ROxford reference for the
+method, so these rows compare only against our own.
 
 ### Other findings
 
-**Multi-scale is the largest effect after the backbone** — +4.7 Medium on AlexNet MAC
-(22.9 → 27.6). Per-scale descriptors are L2-normalized before combining, then combined by
-averaging for every method except GeM, which reuses its own generalized mean (Radenović
-et al., §Multi-scale). That distinction is worth ~0.2 mAP.
+**Multi-scale** is worth +4.7 Medium on AlexNet MAC (22.9 → 27.6). Per-scale descriptors
+are L2-normalized before combining, then combined by averaging for every method except
+GeM, which reuses its own generalized mean (Radenović et al., §Multi-scale) — worth
+~0.2 mAP.
 
 **The `p` curve is flat at its top.** On AlexNet, Medium runs 21.0, 25.8, 27.9, 28.7,
-28.5, 26.2 for `p` = 1, 2, 3, 4, 5, 10 — the 3–5 span sits inside 0.8, so no `p` in that
-range is resolvable from another at one seed. Hard rises monotonically with `p` to true
-max.
-
-**Depth buys little at fixed width.** ResNet18 → ResNet34 (21 → 37 weight layers) gains
-about +1.7 averaged over methods. VGG16 → VGG19 *loses* 1–2.5 Medium while gaining 1.4–2.8
-Hard. Compare that to whitening's +2.9 to +10.2, or the 12–14 point gap between VGG16 and
-ResNet18 at the same 512-D width.
+28.5, 26.2 for `p` = 1, 2, 3, 4, 5, 10 — the 3–5 span sits inside 0.8, unresolvable at
+one seed. Hard rises monotonically with `p` to true max.
 
 Caveats: single seed throughout, roxford5k only (the rparis6k direction is unrun), no
 fine-tuned backbone. Input is capped at `max_side=1024` and never enlarged, except that
