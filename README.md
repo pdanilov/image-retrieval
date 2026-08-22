@@ -139,7 +139,8 @@ was run with WSL at 64 GB. Below k=2048 the default 48 GB is fine.
 
 ## CNN-tier results
 
-Frozen ImageNet backbones, none fine-tuned. Same protocol as the classic tier:
+Frozen ImageNet backbones, plus the published fine-tuned checkpoints in their own
+section below. Same protocol as the classic tier:
 roxford5k, anything fitted is fitted on rparis6k, seed 0, mAP ×100, queries bbx-cropped,
 multi-scale at the three published scales (1, 1/√2, 1/2).
 
@@ -278,6 +279,89 @@ Medium on *torchvision* ResNet101 — but once the weights are right it stops he
 (46.1 → 45.3), so that gain was whitening compensating for weak features. It saturates
 by ~30k images: 30k and 120k differ by 0.2.
 
+### Fine-tuned checkpoints
+
+Everything above is a frozen ImageNet classifier: optimized to tell a golden retriever
+from a poodle, and useful for retrieval only because the features happen to transfer.
+Radenović et al. also publish the same architectures **fine-tuned for retrieval itself**,
+on retrieval-SfM-120k with a contrastive loss over landmark pairs mined by
+structure-from-motion. Oxford/Paris overlaps were removed from that corpus, so the
+cross-dataset rule holds: nothing was fitted on what it searches.
+
+| backbone | scales | Medium mAP | mP@10 | Hard mAP | mP@10 |
+|---|---|---:|---:|---:|---:|
+| VGG16 | single | 59.3 | 81.0 | 32.3 | 49.9 |
+| VGG16 | multi | 60.7 | 82.3 | 32.9 | 51.0 |
+| ResNet101 | single | 63.0 | 83.3 | 38.3 | 54.1 |
+| **ResNet101** | **multi** | **65.4** | **86.0** | **40.4** | **56.4** |
+
+Against Table 5, which reports both metrics on both protocols — eight comparisons, not
+two, and the paper does not evaluate Easy at all:
+
+| multi-scale | Medium mAP | mP@10 | Hard mAP | mP@10 |
+|---|---:|---:|---:|---:|
+| VGG16 ours | 60.7 | 82.3 | 32.9 | 51.0 |
+| V–[37]–GeM published | 61.9 | 82.7 | 33.7 | 51.0 |
+| | −1.2 | −0.4 | −0.8 | **0.0** |
+| ResNet101 ours | 65.4 | 86.0 | 40.4 | 56.4 |
+| R–[37]–GeM published | 64.7 | 84.7 | 38.5 | 53.0 |
+| | **+0.7** | **+1.3** | **+1.9** | **+3.4** |
+
+**This is what the exercise was for.** Every earlier validation point sat at the bottom
+of the published range, 40–46, where a two-point discrepancy is hard to read. Reproducing
+64.7 confirms the evaluation path at the top of the range as well, so the gaps in the
+off-the-shelf grid above are descriptor gaps and not harness gaps.
+
+ResNet101 lands above its published row and VGG16 below its own — opposite directions,
+which is not the shape a pipeline error takes. VGG16's Hard mP@10 is exact and its
+Medium mP@10 is −0.4, so the top of its ranking matches and the ~1 mAP shortfall is in
+the tail. One candidate was tested and rejected: matching the reference's resize order
+(normalize first, then bilinearly interpolate the tensor, rather than our single bicubic
+PIL resize from the original) moved Medium +0.2 and Hard −0.2. The residual is left
+unexplained rather than tuned away.
+
+**The pooling was never the problem.** `p` is differentiable and was therefore trained,
+not chosen — and it came out at **2.9208** (VGG16) and **2.9033** (ResNet101) against the
+hand-picked 3.0 used everywhere above. Training moved it by 3%. The entire ~19 mAP gap
+between the off-the-shelf and fine-tuned rows is in the conv weights.
+
+A checkpoint carries three things, and loading only the first would silently produce a
+plausible wrong number: the conv stack, the trained `p`, and a supervised whitening
+fitted on matching pairs after training (`meta['Lw']`, in `ss` and `ms` variants for
+single- and multi-scale runs). The last of these means these runs fit **nothing** at
+extraction time — there is no held-out pass at all, which is why they are also the
+fastest rows in the tier.
+
+```
+uv run cbir evaluate --dataset roxford5k gem --backbone resnet101 --weights sfm120k \
+    --p learned --scales 1.0 0.7071067811865476 0.5 --whiten --whiten-source learned
+```
+
+Checkpoints are a manual download (`retrievalSfM120k-vgg16-gem-b4dcdc6.pth`,
+`retrievalSfM120k-resnet101-gem-b80fb85.pth`) into `CBIR_WEIGHTS_ROOT`; see
+`descriptors/cnn/finetuned.py`. Only GeM was published — there is no fine-tuned R-MAC
+checkpoint, and asking for one is refused rather than silently downgraded.
+
+### Where the tiers stand
+
+Same benchmark, same protocol, best row from each:
+
+| tier | descriptor | dim | Medium | Hard |
+|---|---|---:|---:|---:|
+| classic | VLAD k=4096 | 524288 | 38.5 | 19.5 |
+| off-the-shelf CNN | ResNet101 R-MAC, caffe | 2048 | 46.5 | 14.2 |
+| off-the-shelf CNN | ResNet101 GeM `p=3`, caffe | 2048 | 46.1 | 18.6 |
+| fine-tuned CNN | ResNet101 GeM, multi-scale | 2048 | **65.4** | **40.4** |
+
+The off-the-shelf tier needs two rows because no single one wins both protocols: R-MAC
+takes Medium and GeM takes Hard, and R-MAC's Hard is its weakest result — the
+per-region-whitening gap documented above. Either way that tier beats the classic one on
+Medium from a vector 256× shorter, while **losing** to it on Hard (19.5 against 18.6).
+
+The fine-tuned row wins both outright: +27.0 Medium and +21.0 Hard over VLAD, at 1/256
+the width — because the network was trained for the question being asked instead of
+borrowed from a classifier.
+
 ### Neural Codes
 
 | backbone | dim | Medium | Hard |
@@ -304,7 +388,7 @@ GeM, which reuses its own generalized mean (Radenović et al., §Multi-scale) �
 28.5, 26.2 for `p` = 1, 2, 3, 4, 5, 10 — the 3–5 span sits inside 0.8, unresolvable at
 one seed. Hard rises monotonically with `p` to true max.
 
-Caveats: single seed throughout, roxford5k only (the rparis6k direction is unrun), no
-fine-tuned backbone. Input is capped at `max_side=1024` and never enlarged, except that
+Caveats: single seed throughout, roxford5k only (the rparis6k direction is unrun). Input
+is capped at `max_side=1024` and never enlarged, except that
 scaled inputs are floored at each backbone's conv-stack minimum (63 px AlexNet, 32 px
 elsewhere), which can only trigger below full scale.
