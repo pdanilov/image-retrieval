@@ -169,7 +169,17 @@ def _track(step: int, values: dict[str, float], config: TrainConfig | None = Non
         return
 
 
-def train(config: TrainConfig, device: str | None = None, log=print) -> Path:
+def _log(message: str) -> None:
+    """Print and flush.
+
+    Not plain `print`: stdout to a pipe is block-buffered, so a run redirected to a file
+    shows nothing until 4KB accumulates. Over a multi-hour schedule that means no
+    progress, and no chance to notice a run diverging until it ends.
+    """
+    print(message, flush=True)
+
+
+def train(config: TrainConfig, device: str | None = None, log=_log) -> Path:
     """Run the whole schedule, checkpointing each epoch. Returns the best checkpoint."""
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     torch.manual_seed(config.seed)
@@ -211,15 +221,20 @@ def train(config: TrainConfig, device: str | None = None, log=print) -> Path:
         scheduler.step()
         metrics = validate(model, val_corpus, device, config.image_size, log)
 
+        # Reserved, not allocated: images vary in size, so the caching allocator holds
+        # blocks it cannot reuse for the next shape. Logged because that number growing
+        # across epochs is the failure mode a long run dies of.
+        reserved = torch.cuda.max_memory_reserved() / 1024**3 if device.startswith("cuda") else 0.0
         log(
             f"epoch {epoch}/{config.epochs}: loss {loss:.4f} "
             f"mAP {metrics['mean_average_precision']:.4f} p {model.pool.p.item():.4f} "
-            f"({time.time() - started:.0f}s)"
+            f"({time.time() - started:.0f}s, {reserved:.1f} GB reserved)"
         )
         _track(
             epoch,
             {"train/loss": loss, "p": model.pool.p.item(), "lr": scheduler.get_last_lr()[0]}
-            | {f"val/{k}": v for k, v in metrics.items()},
+            | {f"val/{k}": v for k, v in metrics.items()}
+            | {"gpu/reserved_gb": reserved},
         )
 
         _save(directory / "last.pth", model, config, epoch, metrics, optimizer)
