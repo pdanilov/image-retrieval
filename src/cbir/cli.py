@@ -24,23 +24,22 @@ Descriptor = Annotated[
     | Annotated[FisherConfig, tyro.conf.subcommand("fisher")]
     | Annotated[NeuralCodesConfig, tyro.conf.subcommand("neural-codes")]
     | Annotated[PooledConfig, tyro.conf.subcommand("gem")]
-    | Annotated[RMACConfig, tyro.conf.subcommand("rmac")],
+    | Annotated[RMACConfig, tyro.conf.subcommand("rmac")]
+    # Presets join the *same* union rather than getting their own command: they produce
+    # these very types, so `cbir evaluate gem-ft-r101` and `cbir evaluate gem --backbone
+    # resnet101 ...` differ only in how much you had to type. Built from the instances,
+    # so every field stays an overridable flag and the override re-validates --
+    # `gem-ft-r101 --p 3.0` is rejected exactly as spelling it out by hand would be.
+    #
+    # A `--preset` flag cannot do this: a technique's knobs are defined *inside* its
+    # subcommand, so there would be nowhere for `--scales` to live, and the descriptor
+    # subcommand would still be required alongside the flag.
+    | tyro.extras.subcommand_type_from_defaults(PRESETS),
     # Named "" so the technique reads as a bare subcommand (`cbir evaluate bow --k 5000`)
     # rather than `descriptor:bo-w-config`, and each technique's --help lists only its
     # own knobs.
     tyro.conf.arg(name=""),
 ]
-
-Preset = Annotated[
-    tyro.extras.subcommand_type_from_defaults(PRESETS),
-    tyro.conf.arg(name=""),
-]
-"""The same descriptors, pre-filled: one subcommand per entry in `PRESETS`.
-
-Built from the instances themselves, so every field stays an overridable flag and the
-override re-validates -- `cbir evaluate-preset gem-ft-r101 --p 3.0` is rejected exactly
-as spelling that combination out by hand would be.
-"""
 
 
 def download_cmd(
@@ -184,7 +183,8 @@ def evaluate_cmd(
     `cbir results`.
 
     Args:
-        descriptor: Technique to evaluate, with its own hyper-parameters.
+        descriptor: Technique to evaluate, with its own hyper-parameters — or a preset
+            from `configs/presets.py`, whose knobs remain overridable.
         dataset: Benchmark to evaluate on.
         mp_at_k: Cutoff for mean precision@k. mAP is always over the full ranking.
         sweep: Run once per value, overriding the technique's swept axis — `k` for the
@@ -207,29 +207,6 @@ def evaluate_cmd(
     print(_render([_row(run_record, "map") for run_record in records], headers))
     if not record:
         print("\n(not recorded: --no-record)")
-
-
-def evaluate_preset_cmd(
-    descriptor: Preset,
-    dataset: EvalDataset = "roxford5k",
-    mp_at_k: int = 10,
-    sweep: tuple[int, ...] = (),
-    record: bool = True,
-) -> None:
-    """Evaluate a named configuration from `configs/presets.py`.
-
-    Identical to `evaluate` in every respect but where the descriptor comes from: a
-    preset is one of the configurations the README quotes, under a name. Its fields are
-    still flags, so a preset is a starting point rather than a fixed recipe.
-
-    Args:
-        descriptor: Preset to evaluate; its own knobs remain overridable.
-        dataset: Benchmark to evaluate on.
-        mp_at_k: Cutoff for mean precision@k. mAP is always over the full ranking.
-        sweep: Run once per value, overriding the technique's swept axis. Empty runs once.
-        record: Append to results/runs.jsonl (and mirror to trackio). Off for scratch runs.
-    """
-    evaluate_cmd(descriptor, dataset=dataset, mp_at_k=mp_at_k, sweep=sweep, record=record)
 
 
 def track_cmd(current_only: bool = False) -> None:
@@ -257,7 +234,6 @@ def main() -> None:
     subcommands = {
         "download": download_cmd,
         "evaluate": evaluate_cmd,
-        "evaluate-preset": evaluate_preset_cmd,
         "results": results_cmd,
         "track": track_cmd,
     }

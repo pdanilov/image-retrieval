@@ -40,10 +40,14 @@ The interesting configurations carry up to ten flags, and the fine-tuned ones on
 in one combination. Every row this README quotes is available by name:
 
 ```
-uv run cbir evaluate-preset gem-ft-r101
-uv run cbir evaluate-preset gem-ft-r101 --scales 1.0   # a preset is a starting point
-uv run cbir evaluate-preset --help                     # list them
+uv run cbir evaluate gem-ft-r101
+uv run cbir evaluate gem-ft-r101 --scales 1.0   # a preset is a starting point
+uv run cbir evaluate --help                     # lists techniques and presets together
 ```
+
+A preset is a subcommand like any technique, not a `--preset` flag: a technique's knobs
+are defined *inside* its subcommand, so a flag would have nowhere to put `--scales` and
+would leave you with a configuration you cannot adjust.
 
 They live in `configs/presets.py` as config *instances*, not YAML — so each one is
 type-checked at import, validates on construction, and an override re-validates:
