@@ -102,6 +102,7 @@ class PooledCNN:
         scales: tuple[float, ...] = (1.0,),
         weights: WeightSource = "torchvision",
         last_pool: bool = True,
+        checkpoint: str | None = None,
         device: str | None = None,
     ) -> None:
         if not scales:
@@ -119,9 +120,10 @@ class PooledCNN:
         self.scales = scales
         self.weights = weights
         self.last_pool = last_pool
+        self.checkpoint = checkpoint
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
 
-        model, self.finetuned = self._build(backbone, weights, last_pool)
+        model, self.finetuned = self._build(backbone, weights, last_pool, checkpoint)
         self._model = model.to(self.device).eval()
         # The trained exponent replaces the requested one only on the path that has one;
         # `self.p` is what pooling reads, so nothing downstream needs to know which.
@@ -129,7 +131,10 @@ class PooledCNN:
 
     @staticmethod
     def _build(
-        backbone: Backbone, weights: WeightSource = "torchvision", last_pool: bool = True
+        backbone: Backbone,
+        weights: WeightSource = "torchvision",
+        last_pool: bool = True,
+        checkpoint: str | None = None,
     ) -> tuple[torch.nn.Module, FineTuned | None]:
         """Everything up to and including the last conv block, classifier discarded.
 
@@ -156,7 +161,9 @@ class PooledCNN:
             return load_caffe(architecture, backbone), None
         if weights == "sfm120k":
             architecture, _ = PooledCNN._build(backbone, "torchvision", last_pool)
-            return load_finetuned(architecture, backbone)
+            # `checkpoint` names a local file — how a network from `cbir train` is
+            # evaluated. Absent, the published checkpoint for this backbone is used.
+            return load_finetuned(architecture, backbone, checkpoint)
 
         match backbone:
             case "alexnet":

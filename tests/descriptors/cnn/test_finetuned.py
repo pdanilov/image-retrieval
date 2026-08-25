@@ -151,3 +151,84 @@ def test_keeping_vggs_trailing_pool_is_refused():
     # map the fine-tuned weights see, and nothing about the result would look wrong.
     with pytest.raises(ValueError, match="last_pool=False"):
         PooledCNN("vgg16", weights="sfm120k", p="learned", last_pool=True)
+
+
+# --- local checkpoints, i.e. our own training output -------------------------------
+
+
+@pytest.fixture
+def local_checkpoint(tmp_path):
+    """A checkpoint in the shape `cbir train` writes, with an identifiable `p`."""
+    import torch
+
+    from cbir.training.loop import TrainConfig, _save
+    from cbir.training.net import RetrievalNet
+
+    net = RetrievalNet("vgg16", weights="torchvision")
+    with torch.no_grad():
+        net.pool.p.fill_(2.5)
+    path = tmp_path / "best.pth"
+    _save(path, net, TrainConfig(backbone="vgg16", weights="torchvision"), epoch=7, metrics={})
+    return path, net
+
+
+def test_a_trained_checkpoint_loads_through_the_published_loader(local_checkpoint):
+    # The reason training writes the reference's layout: one loader, not two that drift.
+    path, net = local_checkpoint
+
+    loaded = finetuned.load("vgg16", str(path))
+
+    assert loaded.p == pytest.approx(2.5)
+    assert set(loaded.state) == set(net.features.state_dict())
+
+
+def test_the_trained_exponent_survives_the_round_trip(local_checkpoint):
+    # `p` is trained, so evaluating at the config's 3.0 instead would score the network
+    # at a pooling it was never trained for -- the whole reason `p="learned"` exists.
+    path, _ = local_checkpoint
+
+    model = PooledCNN("vgg16", p="learned", weights="sfm120k", last_pool=False, checkpoint=str(path))
+
+    assert model.p == pytest.approx(2.5)
+
+
+def test_a_trained_checkpoint_has_no_learned_whitening_and_says_so(local_checkpoint):
+    # The published checkpoints ship a supervised projection fitted after training; ours
+    # does not, because learning it is a step this project has not built. The message has
+    # to name the way out, or the run just fails.
+    path, _ = local_checkpoint
+
+    loaded = finetuned.load("vgg16", str(path))
+
+    assert loaded._whitening is None
+    with pytest.raises(ValueError, match="held_out"):
+        loaded.whitening((1.0,))
+
+
+def test_a_checkpoint_path_requires_the_finetuned_weight_source():
+    with pytest.raises(ValueError, match="needs weights='sfm120k'"):
+        PooledConfig(backbone="vgg16", checkpoint="somewhere.pth")
+
+
+def test_a_missing_checkpoint_file_is_named(tmp_path):
+    with pytest.raises(FileNotFoundError, match="not found"):
+        finetuned.load("vgg16", str(tmp_path / "absent.pth"))
+
+
+def test_a_checkpoint_for_another_architecture_is_refused(local_checkpoint):
+    # meta['architecture'] is checked, so a vgg16 checkpoint cannot be loaded into a
+    # resnet and half-fill it.
+    path, _ = local_checkpoint
+
+    with pytest.raises(ValueError, match="is a vgg16 checkpoint"):
+        finetuned.load("resnet101", str(path))
+
+
+def test_rmac_refuses_a_checkpoint_too():
+    # RMACConfig has no `checkpoint` field, so that misuse cannot be spelled. The model
+    # takes **kwargs, though, and would forward one straight into PooledCNN.
+    from cbir.descriptors.cnn.rmac import RMAC
+
+    assert "checkpoint" not in RMACConfig.__dataclass_fields__
+    with pytest.raises(ValueError, match="GeM only"):
+        RMAC("vgg16", checkpoint="x.pth")

@@ -31,6 +31,7 @@ exposed as a knob, so it cannot contradict them.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -59,8 +60,12 @@ class FineTuned:
     p: float
     """The trained generalized-mean exponent."""
 
-    _whitening: dict[str, tuple[np.ndarray, np.ndarray]]
-    """Per-variant `(P, m)`, keyed `ss` / `ms`."""
+    _whitening: dict[str, tuple[np.ndarray, np.ndarray]] | None
+    """Per-variant `(P, m)`, keyed `ss` / `ms` — or `None`.
+
+    The published checkpoints ship a supervised projection fitted on matching pairs after
+    training. One produced by `cbir train` does not: learning it is a separate step this
+    project has not built, so those runs whiten with PCA on the held-out set instead."""
 
     def whitening(self, scales: tuple[float, ...], dim: int | None = None) -> PCACompression:
         """The supervised whitening fitted for this run's number of scales.
@@ -72,6 +77,11 @@ class FineTuned:
         these descriptors — the projection is already ordered, so there is nothing to
         refit.
         """
+        if self._whitening is None:
+            raise ValueError(
+                "this checkpoint carries no learned whitening (meta['Lw']) — it was not produced by the "
+                "reference. Use --whiten-source held_out to fit a PCA whitening instead."
+            )
         variant = "ss" if len(scales) == 1 else "ms"
         projection, mean = self._whitening[variant]
         if dim is not None:
@@ -81,14 +91,23 @@ class FineTuned:
         return PCACompression(mean=mean.reshape(-1), components=projection)
 
 
-def load(backbone: str) -> FineTuned:
-    """Read the fine-tuned checkpoint for `backbone`, or say what is missing."""
-    if backbone not in FILES:
-        raise ValueError(f"no fine-tuned checkpoint published for {backbone!r}; have {sorted(FILES)}")
+def load(backbone: str, checkpoint: str | None = None) -> FineTuned:
+    """Read a fine-tuned checkpoint: the published one for `backbone`, or a local file.
 
-    path = root() / FILES[backbone]
-    if not path.exists():
-        raise FileNotFoundError(f"{path} not found — download it from {URL}/{FILES[backbone]}")
+    `checkpoint` is how a network produced by `cbir train` is evaluated. Both kinds are
+    read by this one function because `training/loop.py` writes the reference's layout
+    deliberately — the alternative was a second loader that could drift from this one.
+    """
+    if checkpoint is not None:
+        path = Path(checkpoint)
+        if not path.exists():
+            raise FileNotFoundError(f"checkpoint {path} not found")
+    else:
+        if backbone not in FILES:
+            raise ValueError(f"no fine-tuned checkpoint published for {backbone!r}; have {sorted(FILES)}")
+        path = root() / FILES[backbone]
+        if not path.exists():
+            raise FileNotFoundError(f"{path} not found — download it from {URL}/{FILES[backbone]}")
 
     # `weights_only=False` because `meta` holds numpy arrays, not just tensors. The file
     # is one we downloaded from a known URL, not user input.
@@ -100,18 +119,25 @@ def load(backbone: str) -> FineTuned:
     if meta["pooling"] != "gem":
         raise ValueError(f"{path.name} pools by {meta['pooling']!r}; only gem is wired up")
 
-    learned = meta["Lw"][CORPUS]
+    learned = meta.get("Lw", {}).get(CORPUS)
     return FineTuned(
         state={_rename(key, backbone): value for key, value in state.items() if key.startswith("features.")},
         p=float(state["pool.p"].item()),
-        _whitening={variant: (learned[variant]["P"], learned[variant]["m"]) for variant in ("ss", "ms")},
+        _whitening=(
+            {variant: (learned[variant]["P"], learned[variant]["m"]) for variant in ("ss", "ms")}
+            if learned is not None
+            else None
+        ),
     )
 
 
-def load_into(model: torch.nn.Module, backbone: str) -> tuple[torch.nn.Module, FineTuned]:
+def load_into(
+    model: torch.nn.Module, backbone: str, checkpoint: str | None = None
+) -> tuple[torch.nn.Module, FineTuned]:
     """Fill `model` with the fine-tuned conv weights, returning it and the rest."""
-    checkpoint = load(backbone)
-    return apply_state(model, checkpoint.state, source=FILES[backbone], backbone=backbone), checkpoint
+    loaded = load(backbone, checkpoint)
+    source = checkpoint if checkpoint is not None else FILES[backbone]
+    return apply_state(model, loaded.state, source=str(source), backbone=backbone), loaded
 
 
 def _rename(key: str, backbone: str) -> str:

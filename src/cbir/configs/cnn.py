@@ -102,6 +102,11 @@ class PooledConfig:
         last_pool: Keep VGG's and AlexNet's trailing max-pool. The reference drops it,
             which quadruples the conv map's positions and changes what the pooling sees.
             No effect on ResNet.
+        checkpoint: Path to a local fine-tuned checkpoint, which is how a network from
+            `cbir train` is scored. Only meaningful with `weights="sfm120k"`; absent, that
+            source resolves to the published checkpoint for the backbone. Recorded, so a
+            row always says which weights produced it — though the path is local, so
+            reproducing such a row means retraining rather than re-downloading.
         whiten: Divide each PCA direction by its standard deviation. Radenović et al.
             call this "essential" for off-the-shelf CNN descriptors and apply it to
             every such row they publish, so their numbers are not comparable without
@@ -126,6 +131,7 @@ class PooledConfig:
     dim: int | None = None
     weights: WeightSource = "torchvision"
     last_pool: bool = True
+    checkpoint: str | None = None
     whiten: bool = False
     whiten_source: WhitenSource = "held_out"
     shrinkage: float = 0.0
@@ -143,6 +149,8 @@ class PooledConfig:
             raise ValueError(
                 f"p='learned' and weights='sfm120k' go together; got p={self.p!r}, weights={self.weights!r}"
             )
+        if self.checkpoint is not None and self.weights != "sfm120k":
+            raise ValueError(f"checkpoint= needs weights='sfm120k', got {self.weights!r}")
         if self.whiten_source == "learned":
             if self.weights != "sfm120k":
                 raise ValueError("whiten_source='learned' needs a fine-tuned checkpoint to read it from")
@@ -168,6 +176,7 @@ class PooledConfig:
             scales=self.scales,
             weights=self.weights,
             last_pool=self.last_pool,
+            checkpoint=self.checkpoint,
         )
 
         database_vectors = model.extract(iter_images(inputs.database_paths))
