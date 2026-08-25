@@ -26,12 +26,12 @@ the upstream loading script are broken and are rejected outright. See
 ## Evaluating
 
 ```
-uv run cbir evaluate --dataset roxford5k bow    --k 20000
-uv run cbir evaluate --dataset roxford5k vlad   --k 256
+uv run cbir evaluate --dataset roxford5k bow --k 20000
+uv run cbir evaluate --dataset roxford5k vlad --k 256
 uv run cbir evaluate --dataset roxford5k fisher --k 64
 
 # a sweep is one run per k, sharing a single descriptor extraction
-uv run cbir evaluate --dataset roxford5k --sweep-k 16 64 256 vlad --seed 0
+uv run cbir evaluate --dataset roxford5k --sweep 16 64 256 vlad --seed 0
 ```
 
 Each run extracts RootSIFT, trains the codebook **on the other dataset**, encodes the
@@ -123,9 +123,9 @@ scratch at any time.
 ### Reproducing the table
 
 ```
-uv run cbir evaluate --dataset roxford5k --sweep-k 1000 5000 20000 50000 bow    --seed 0
-uv run cbir evaluate --dataset roxford5k --sweep-k 16 32 64 128 256 512 1024 2048 4096 vlad --seed 0
-uv run cbir evaluate --dataset roxford5k --sweep-k 16 64 128 256 fisher --seed 0
+uv run cbir evaluate --dataset roxford5k --sweep 1000 5000 20000 50000 bow --seed 0
+uv run cbir evaluate --dataset roxford5k --sweep 16 32 64 128 256 512 1024 2048 4096 vlad --seed 0
+uv run cbir evaluate --dataset roxford5k --sweep 16 64 128 256 fisher --seed 0
 ```
 
 Roughly 10 hours cold on 16 cores, most of it BoW's k-means at k=20000 and k=50000. VLAD
