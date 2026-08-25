@@ -91,3 +91,43 @@ def test_validation_uses_exact_search_not_faiss():
     source = inspect.getsource(loop.validate)
     assert "CustomKNN" in source
     assert "faiss" not in source.lower() or "not the FaissKNN default" in source
+
+
+def test_training_starts_from_the_weights_the_reference_starts_from():
+    # The reference fills the architecture from its Caffe-converted ImageNet weights
+    # whenever it has them -- true for all three trainable backbones -- so the published
+    # numbers were reached from a Caffe init. Defaulting to torchvision would diverge
+    # from the recipe before the first step, and the frozen tier measured that gap at
+    # 0.347 against 0.461 for resnet101 GeM.
+    from cbir.descriptors.cnn.weights import CAFFE_FILES
+
+    assert TrainConfig().weights == "caffe"
+    for backbone in ("vgg16", "resnet50", "resnet101"):
+        assert backbone in CAFFE_FILES, f"{backbone} has no caffe weights to start from"
+
+
+def test_the_weight_source_reaches_the_network(monkeypatch):
+    # `weights` had no CLI flag at all for a while, and TrainConfig carried a default
+    # that never matched the recipe. Parameterized knobs that never reach the model are
+    # this project's recurring bug.
+    seen = {}
+
+    def _record(backbone, **kwargs):
+        seen.update(kwargs | {"backbone": backbone})
+        raise RuntimeError("stop before the GPU")
+
+    from cbir.training import loop
+
+    monkeypatch.setattr(loop, "RetrievalNet", _record)
+    with pytest.raises(RuntimeError, match="stop before"):
+        loop.train(TrainConfig(backbone="resnet101", weights="torchvision"), device="cpu", log=lambda *_: None)
+
+    assert seen["backbone"] == "resnet101"
+    assert seen["weights"] == "torchvision"
+
+
+def test_a_finetuned_checkpoint_cannot_be_a_starting_point():
+    # sfm120k weights are already the output of this process; training from them would
+    # be a second fine-tune wearing the first one's name.
+    with pytest.raises(ValueError, match="already fine-tuned"):
+        RetrievalNet("vgg16", weights="sfm120k")

@@ -59,10 +59,18 @@ class TrainConfig:
     362, five negatives, 2000 queries against a 22000-image pool, Adam at 5e-7 with
     weight decay 1e-6, and an exponential decay of exp(-0.01) per epoch. `margin`
     defaults to the published value for the chosen backbone.
+
+    `weights` defaults to **caffe** for the same reason. The reference fills the
+    architecture from its own Caffe-converted ImageNet weights whenever it has them —
+    which it does for all three backbones trainable here — so the published 0.619 / 0.647
+    were reached from a Caffe initialization. Starting from torchvision's would diverge
+    from the recipe before the first step, and the frozen tier already measured how much
+    that matters: resnet101 GeM scores 0.347 on torchvision weights against 0.461 on
+    Caffe. They are a manual download; see `descriptors/cnn/weights.py`.
     """
 
     backbone: Backbone = "vgg16"
-    weights: WeightSource = "torchvision"
+    weights: WeightSource = "caffe"
     epochs: int = 30
     lr: float = 5e-7
     weight_decay: float = 1e-6

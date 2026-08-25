@@ -212,6 +212,7 @@ def evaluate_cmd(
 
 def train_cmd(
     backbone: Literal["vgg16", "resnet101", "resnet50"] = "vgg16",
+    weights: Literal["caffe", "torchvision"] = "caffe",
     epochs: int = 30,
     lr: float = 5e-7,
     margin: float | None = None,
@@ -232,7 +233,10 @@ def train_cmd(
     default sizes. The corpus is a manual download — see `descriptors/cnn/sfm.py`.
 
     Args:
-        backbone: Architecture to fine-tune, starting from its ImageNet weights.
+        backbone: Architecture to fine-tune.
+        weights: Which ImageNet weights to start from. The reference initializes from
+            its Caffe-converted ones and the published numbers were reached that way, so
+            that is the default; `torchvision` is the ablation. A manual download.
         epochs: Passes over the sampled tuples.
         lr: Adam learning rate. The published value is 5e-7 and is calibrated to a
             summed loss; raising it without also changing the reduction diverges.
@@ -249,6 +253,7 @@ def train_cmd(
 
     config = TrainConfig(
         backbone=backbone,
+        weights=weights,
         epochs=epochs,
         lr=lr,
         margin=margin,
