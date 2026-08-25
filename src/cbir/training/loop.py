@@ -68,6 +68,14 @@ class TrainConfig:
     that matters: resnet101 GeM scores 0.347 on torchvision weights against 0.461 on
     Caffe. They are a manual download; see `descriptors/cnn/weights.py`.
 
+    `patience` stops the run when validation mAP has not improved on the running best by
+    more than `min_delta` for that many epochs. The reference has no such rule — it runs
+    a fixed 100 epochs — so this is a departure, made because the curve decelerates to
+    roughly the size of `min_delta` per epoch long before the schedule ends. `best.pth`
+    still tracks *any* improvement, however small; only the patience counter ignores gains
+    under `min_delta`, so stopping early never discards a checkpoint that was genuinely
+    the best one seen. Set `patience=None` to run the full schedule.
+
     `resume` picks up `last.pth` from the run directory when one is there, which is what
     makes a restart policy worth having: without it a crash at epoch 25 restarts from
     zero, and a supervisor that restarts a non-resumable job is worse than no supervisor.
@@ -87,6 +95,8 @@ class TrainConfig:
     pool_size: int = POOL_SIZE
     neg_num: int = NEG_NUM
     p: float = 3.0
+    patience: int | None = 5
+    min_delta: float = 0.001
     resume: bool = True
     seed: int = 0
     out: Path = field(default=Path("data/runs"))
@@ -221,7 +231,7 @@ def train(config: TrainConfig, device: str | None = None, log=_log) -> Path:
 
     resumed = _resume(last_path, model, optimizer, scheduler, config, device, log) if config.resume else None
     if resumed is not None:
-        start, best = resumed
+        start, best, best_epoch = resumed
         _track(start - 1, {}, config, run)
     else:
         # Measured before any training so every later epoch has something to be better
@@ -230,6 +240,7 @@ def train(config: TrainConfig, device: str | None = None, log=_log) -> Path:
         log(f"epoch 0 (untrained): {baseline}")
         _track(0, {f"val/{k}": v for k, v in baseline.items()} | {"p": model.pool.p.item()}, config, run)
         best = baseline["mean_average_precision"]
+        best_epoch = 0
         _save(best_path, model, config, epoch=0, metrics=baseline)
 
     for epoch in range(start, config.epochs + 1):
@@ -266,14 +277,28 @@ def train(config: TrainConfig, device: str | None = None, log=_log) -> Path:
             | {"gpu/reserved_gb": reserved},
         )
 
-        _save(last_path, model, config, epoch, metrics, optimizer, scheduler, best)
-        if metrics["mean_average_precision"] > best:
-            best = metrics["mean_average_precision"]
+        _save(last_path, model, config, epoch, metrics, optimizer, scheduler, best, best_epoch)
+        score = metrics["mean_average_precision"]
+        # Two different questions, deliberately not merged: `best_epoch` asks whether the
+        # run is still making progress worth paying for, `best` asks which checkpoint to
+        # keep. A +0.0005 epoch answers no to the first and yes to the second.
+        if score > best + config.min_delta:
+            best_epoch = epoch
+        if score > best:
+            best = score
             _save(best_path, model, config, epoch, metrics)
             log(f"  new best: {best:.4f}")
             # Rewritten so an interrupt between the two saves cannot leave `last.pth`
             # claiming a `best` that no file on disk matches.
-            _save(last_path, model, config, epoch, metrics, optimizer, scheduler, best)
+            _save(last_path, model, config, epoch, metrics, optimizer, scheduler, best, best_epoch)
+
+        stale = epoch - best_epoch
+        if config.patience is not None and stale >= config.patience:
+            log(
+                f"  early stop: {stale} epochs without a gain over {config.min_delta:g} "
+                f"(best {best:.4f}, last real gain at epoch {best_epoch})"
+            )
+            break
 
     return best_path
 
@@ -300,8 +325,11 @@ def _with_heartbeat(log, path: Path):
     return logged
 
 
-def _resume(path: Path, model, optimizer, scheduler, config: TrainConfig, device: str, log) -> tuple[int, float] | None:
-    """Restore a run from `last.pth`, returning the epoch to start at and the best so far.
+def _resume(
+    path: Path, model, optimizer, scheduler, config: TrainConfig, device: str, log
+) -> tuple[int, float, int] | None:
+    """Restore a run from `last.pth`: the epoch to start at, the best so far, and the
+    epoch of the last gain that beat `min_delta`.
 
     Returns `None` when there is nothing to resume, so a first run is the same code path.
 
@@ -322,8 +350,12 @@ def _resume(path: Path, model, optimizer, scheduler, config: TrainConfig, device
     scheduler.load_state_dict(payload["scheduler"])
     done = int(payload["meta"]["epoch"])
     best = float(payload["best"])
+    # Absent in checkpoints written before early stopping existed. Falling back to the
+    # saved epoch starts the patience clock fresh, which is the forgiving direction: a
+    # resumed old run gets its full patience rather than stopping on its first epoch.
+    best_epoch = int(payload.get("best_epoch", done))
     log(f"resuming from epoch {done} (best mAP {best:.4f}, p {model.pool.p.item():.4f})")
-    return done + 1, best
+    return done + 1, best, best_epoch
 
 
 def _save(
@@ -335,6 +367,7 @@ def _save(
     optimizer=None,
     scheduler=None,
     best: float | None = None,
+    best_epoch: int | None = None,
 ) -> None:
     """Checkpoint in the reference's layout, so the eval path can read it unchanged.
 
@@ -342,7 +375,8 @@ def _save(
     `descriptors/cnn/finetuned.py` strips and reads — a checkpoint written here is
     therefore loadable by the same code that loads the published ones.
 
-    `optimizer`/`scheduler`/`best` are written only for `last.pth`, the resume point.
+    `optimizer`/`scheduler`/`best`/`best_epoch` are written only for `last.pth`, the
+    resume point.
     `best.pth` is the artifact that gets evaluated and stays free of training state —
     which also keeps it a third of the size.
     """
@@ -364,4 +398,6 @@ def _save(
         payload["scheduler"] = scheduler.state_dict()
     if best is not None:
         payload["best"] = best
+    if best_epoch is not None:
+        payload["best_epoch"] = best_epoch
     torch.save(payload, path)

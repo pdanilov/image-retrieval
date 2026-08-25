@@ -220,6 +220,8 @@ def train_cmd(
     pool_size: int = 22000,
     image_size: int = 362,
     seed: int = 0,
+    patience: int | None = 5,
+    min_delta: float = 0.001,
     resume: bool = True,
     out: str = "data/runs",
 ) -> None:
@@ -247,6 +249,11 @@ def train_cmd(
         pool_size: Images descriptors are extracted for, to mine negatives from.
         image_size: Longest side during training. Evaluation still runs at 1024.
         seed: Seeds sampling and initialization.
+        patience: Stop after this many epochs with no validation-mAP gain larger than
+            `min_delta`. `None` runs the full schedule, as the reference does.
+        min_delta: How much an epoch must beat the running best by to count as progress.
+            Smaller gains still update `best.pth`; they just do not reset the patience
+            counter.
         resume: Continue from `last.pth` if the run directory already holds one. Mining
             is seeded per epoch, so a resumed run draws the tuples a fresh one would have.
         out: Directory for checkpoints.
@@ -264,6 +271,8 @@ def train_cmd(
         pool_size=pool_size,
         image_size=image_size,
         seed=seed,
+        patience=patience,
+        min_delta=min_delta,
         resume=resume,
         out=Path(out),
     )

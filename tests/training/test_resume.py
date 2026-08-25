@@ -50,10 +50,27 @@ def test_it_restarts_at_the_epoch_after_the_one_that_finished(run):
     path, _, _, _ = run
     fresh, optimizer, scheduler = _fresh()
 
-    start, best = _resume(path, fresh, optimizer, scheduler, TrainConfig(backbone="vgg16"), "cpu", lambda *_: None)
+    start, best, best_epoch = _resume(
+        path, fresh, optimizer, scheduler, TrainConfig(backbone="vgg16"), "cpu", lambda *_: None
+    )
 
     assert start == 8  # epoch 7 completed, so 8 is next
     assert best == pytest.approx(0.61)
+    # `_save` was called without `best_epoch`, as pre-early-stopping checkpoints were:
+    # the patience clock restarts at the resumed epoch rather than firing immediately.
+    assert best_epoch == 7
+
+
+def test_the_patience_clock_survives_a_resume(tmp_path):
+    """Otherwise a supervisor that restarts the job hands it unlimited patience."""
+    model, optimizer, scheduler = _fresh()
+    path = tmp_path / "last.pth"
+    _save(path, model, TrainConfig(), 9, {}, optimizer, scheduler, 0.61, best_epoch=4)
+
+    fresh, fresh_optimizer, fresh_scheduler = _fresh()
+    start, _, best_epoch = _resume(path, fresh, fresh_optimizer, fresh_scheduler, TrainConfig(), "cpu", lambda *_: None)
+
+    assert (start, best_epoch) == (10, 4)  # five epochs stale, not zero
 
 
 def test_the_trained_weights_come_back(run):
