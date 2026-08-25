@@ -219,3 +219,6 @@ __marimo__/
 
 # Project data: image archives, ground truth, cached descriptors, indexes
 /data/
+
+# Notebooks import style.py from their own directory
+notebooks/__pycache__/

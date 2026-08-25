@@ -122,7 +122,9 @@ chunked search, not a bigger machine.
 Caveats: single seed, so small gaps are unresolved; roxford5k only, so the ranking is not
 cross-checked on rparis6k; Fisher's GMM is fitted on a seeded 1M-descriptor subsample.
 
-`notebooks/02_classic_comparison.ipynb` plots all of this from `results/runs.jsonl`. Run it
+`notebooks/02_classic_comparison.ipynb` (classic tier) and `03_cnn_comparison.ipynb`
+(CNN tiers) plot all of this from `results/runs.jsonl`; both share palettes and styling
+via `notebooks/style.py`. Run it
 top to bottom — it ships with outputs stripped.
 
 For a browsable dashboard instead, install the optional extra and mirror the record:
@@ -326,6 +328,8 @@ two, and the paper does not evaluate Easy at all:
 | R–[37]–GeM published | 64.7 | 84.7 | 38.5 | 53.0 |
 | | **+0.7** | **+1.3** | **+1.9** | **+3.4** |
 
+![Off-the-shelf and fine-tuned GeM against the published rows, all three protocols](docs/cnn_validation.png)
+
 **This is what the exercise was for.** Every earlier validation point sat at the bottom
 of the published range, 40–46, where a two-point discrepancy is hard to read. Reproducing
 64.7 confirms the evaluation path at the top of the range as well, so the gaps in the
@@ -362,6 +366,8 @@ Checkpoints are a manual download (`retrievalSfM120k-vgg16-gem-b4dcdc6.pth`,
 checkpoint, and asking for one is refused rather than silently downgraded.
 
 ### Where the tiers stand
+
+![mAP against descriptor width for all three tiers on roxford5k Medium](docs/cnn_tiers.png)
 
 Same benchmark, same protocol, best row from each:
 
@@ -406,6 +412,15 @@ GeM, which reuses its own generalized mean (Radenović et al., §Multi-scale) �
 **The `p` curve is flat at its top.** On AlexNet, Medium runs 21.0, 25.8, 27.9, 28.7,
 28.5, 26.2 for `p` = 1, 2, 3, 4, 5, 10 — the 3–5 span sits inside 0.8, unresolvable at
 one seed. Hard rises monotonically with `p` to true max.
+
+**A note on the last digit.** Two runs of one configuration, identical params and an
+identical code path, recorded 42.00 and 42.11 (VGG16 GeM `p=3`, torchvision). Nothing in
+`params` differed and the intervening change was provably a no-op at `shrinkage=0`, so
+that 0.11 is run-to-run nondeterminism in the pipeline itself. **Treat differences below
+roughly 0.2 mAP as noise** — which is the empirical version of the caution the `p` sweep
+already states. It also means a figure may disagree with a table in its last digit: the
+notebooks plot the *most recent* measurement of each configuration, the tables quote the
+run they were written against.
 
 Caveats: single seed throughout, and **roxford5k only** — every number here evaluates on
 roxford5k with rparis6k as the held-out set, and the reverse direction was deliberately

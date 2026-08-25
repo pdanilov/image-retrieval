@@ -70,3 +70,32 @@ def test_excluded_counts_survive_into_the_frame():
 
 def test_empty_store_gives_no_rows(tmp_path):
     assert tidy_rows(tmp_path / "missing.jsonl") == []
+
+
+def test_the_duplicated_channel_map_agrees_with_the_real_one():
+    # frame.py copies these rather than importing pooling.py, which pulls torch into
+    # any kernel that imports it. The copy is only safe while a test compares them.
+    from cbir.descriptors.cnn.pooling import CHANNELS
+    from cbir.eval.frame import CONV_CHANNELS
+
+    assert CONV_CHANNELS == CHANNELS
+
+
+def test_the_neural_codes_width_agrees_with_the_real_one():
+    from cbir.descriptors.cnn.neural_codes import DIM
+    from cbir.eval.frame import FC_DIM
+
+    assert FC_DIM == DIM
+
+
+def test_cnn_widths_come_from_the_params():
+    from cbir.eval.frame import descriptor_dim
+
+    # An explicit PCA width wins.
+    assert descriptor_dim("gem", {"backbone": "resnet101", "dim": 256}) == 256
+    # `dim=None` means no PCA, so the width is the backbone's own.
+    assert descriptor_dim("gem", {"backbone": "resnet101", "dim": None}) == 2048
+    assert descriptor_dim("rmac", {"backbone": "vgg16", "dim": None}) == 512
+    assert descriptor_dim("neural_codes", {"backbone": "vgg16", "dim": None}) == 4096
+    # An unknown backbone is missing data, not a zero-width descriptor.
+    assert descriptor_dim("gem", {"backbone": "convnext", "dim": None}) is None
