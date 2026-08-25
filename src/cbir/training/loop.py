@@ -1,0 +1,247 @@
+"""The training loop: mine, train, validate, checkpoint.
+
+Written here rather than taken from `pytorch_metric_learning.trainers`, which does not
+fit this recipe on two structural counts. Its trainers assemble batches through a
+DataLoader and call the trunk on one stacked tensor, but these images keep their aspect
+ratio — `(3, 362, 271)` beside `(3, 204, 362)` — and cannot be stacked without either
+padding the pooling with zeros or distorting every training image. And its mining
+functions work inside the batch, while the negatives here come from a separate pass over
+a 22000-image pool; mining a batch of five tuples would draw from 35 images instead, and
+hard negatives are the part of this recipe that makes it work.
+
+PML earns its place in the two spots where it fits the data rather than the loop: the
+loss (see `loss.py`) and validation, where `AccuracyCalculator` takes precomputed
+embeddings and so never touches a DataLoader.
+
+An epoch is: re-mine negatives against the current model, walk the tuples accumulating
+gradients, step every `batch_size` tuples, then measure retrieval on the held-out
+landmark split. Mining first is deliberate — negatives mined by a stale model are the
+one bug in this recipe that still trains, just worse.
+"""
+
+from __future__ import annotations
+
+import time
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+
+import torch
+
+from cbir.descriptors.cnn.pooling import Backbone
+from cbir.descriptors.cnn.weights import WeightSource
+from cbir.training.loss import MARGIN, contrastive_loss
+from cbir.training.net import RetrievalNet
+from cbir.training.tuples import (
+    IMAGE_SIZE,
+    NEG_NUM,
+    POOL_SIZE,
+    QUERY_SIZE,
+    Corpus,
+    load_tensor,
+    sample_epoch,
+)
+
+PROJECT = "cbir-train"
+"""Kept apart from the `cbir` project that holds evaluation runs: these are curves over
+epochs, those are one terminal row per configuration, and mixing them makes both harder
+to read. AGENTS.md anticipated exactly this split when fine-tuning entered scope."""
+
+VAL_METRICS = ("precision_at_1", "mean_average_precision")
+"""What validation reports. `mean_average_precision` is the one to watch — it is the same
+quantity the benchmark reports, measured on held-out landmarks rather than on Oxford."""
+
+
+@dataclass(frozen=True)
+class TrainConfig:
+    """One fine-tuning run.
+
+    Defaults are the reference's published command, not choices made here: image size
+    362, five negatives, 2000 queries against a 22000-image pool, Adam at 5e-7 with
+    weight decay 1e-6, and an exponential decay of exp(-0.01) per epoch. `margin`
+    defaults to the published value for the chosen backbone.
+    """
+
+    backbone: Backbone = "vgg16"
+    weights: WeightSource = "torchvision"
+    epochs: int = 30
+    lr: float = 5e-7
+    weight_decay: float = 1e-6
+    lr_gamma: float = 0.99005  # exp(-0.01)
+    batch_size: int = 5
+    margin: float | None = None
+    image_size: int = IMAGE_SIZE
+    query_size: int = QUERY_SIZE
+    pool_size: int = POOL_SIZE
+    neg_num: int = NEG_NUM
+    p: float = 3.0
+    seed: int = 0
+    out: Path = field(default=Path("data/runs"))
+
+    def resolved_margin(self) -> float:
+        if self.margin is not None:
+            return self.margin
+        if self.backbone not in MARGIN:
+            raise ValueError(f"no published margin for {self.backbone!r}; pass --margin explicitly")
+        return MARGIN[self.backbone]
+
+
+def validate(model: torch.nn.Module, corpus: Corpus, device: str, image_size: int, log=None) -> dict[str, float]:
+    """Retrieval accuracy on the held-out split, by SfM cluster.
+
+    A retrieval metric rather than the validation loss: loss falls as the mined negatives
+    get harder as well as when the model improves, so it is not comparable across epochs.
+    Cluster identity is the label — two images match when they reconstructed into the
+    same 3D model, which is the same relation the loss is trained on.
+    """
+    from pytorch_metric_learning.distances import CosineSimilarity
+    from pytorch_metric_learning.utils.accuracy_calculator import AccuracyCalculator
+    from pytorch_metric_learning.utils.inference import CustomKNN
+
+    model.eval()
+    with torch.inference_mode():
+        vectors = []
+        for i in range(len(corpus.cids)):
+            vectors.append(model(load_tensor(corpus.path(i), image_size).unsqueeze(0).to(device)).squeeze(0))
+            if log is not None and (i + 1) % 2000 == 0:
+                log(f"  validating: {i + 1}/{len(corpus.cids)}")
+        embeddings = torch.stack(vectors)
+
+    labels = torch.tensor(corpus.cluster, device=embeddings.device)
+    # Exact KNN by matmul, not the FaissKNN default: AGENTS.md keeps search exact and in
+    # torch, and pulling in faiss to rank 6403 vectors would be a heavy way to matmul.
+    calculator = AccuracyCalculator(include=VAL_METRICS, knn_func=CustomKNN(CosineSimilarity()))
+    scores = calculator.get_accuracy(embeddings, labels, embeddings, labels, ref_includes_query=True)
+    return {key: float(value) for key, value in scores.items()}
+
+
+def train_epoch(model, tuples, optimizer, margin: float, batch_size: int, device: str, log=None) -> float:
+    """One pass over the epoch's tuples. Returns the mean per-tuple loss."""
+    model.train()
+    optimizer.zero_grad()
+    total = 0.0
+
+    for index in range(len(tuples)):
+        images = tuples[index]
+        # One forward per image: they differ in size, so they cannot be stacked.
+        descriptors = torch.cat([model(image.unsqueeze(0).to(device)) for image in images])
+        query = descriptors[:1]
+        positive = descriptors[1:2]
+        negatives = descriptors[2:].unsqueeze(0)
+
+        loss = contrastive_loss(query, positive, negatives, margin)
+        loss.backward()
+        total += float(loss.item())
+
+        # Gradients accumulate across `batch_size` tuples before a step, which is how the
+        # reference gets a batch out of a loop that can only forward one image at a time.
+        if (index + 1) % batch_size == 0:
+            optimizer.step()
+            optimizer.zero_grad()
+        if log is not None and (index + 1) % 200 == 0:
+            log(f"  train: {index + 1}/{len(tuples)} loss {total / (index + 1):.4f}")
+
+    if len(tuples) % batch_size:
+        optimizer.step()
+        optimizer.zero_grad()
+    return total / max(len(tuples), 1)
+
+
+def _track(step: int, values: dict[str, float], config: TrainConfig | None = None, name: str | None = None) -> None:
+    """Mirror a curve point into trackio, never raising into the caller."""
+    try:
+        import trackio
+    except ImportError:
+        return
+    try:
+        if name is not None and config is not None:
+            trackio.init(project=PROJECT, name=name, config={k: str(v) for k, v in asdict(config).items()})
+        trackio.log(values, step=step)
+    except Exception:
+        # A tracking failure must never cost a training run that took hours.
+        return
+
+
+def train(config: TrainConfig, device: str | None = None, log=print) -> Path:
+    """Run the whole schedule, checkpointing each epoch. Returns the best checkpoint."""
+    device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+    torch.manual_seed(config.seed)
+
+    model = RetrievalNet(config.backbone, p=config.p, weights=config.weights).to(device)
+    margin = config.resolved_margin()
+    optimizer = torch.optim.Adam(model.parameters(), lr=config.lr, weight_decay=config.weight_decay)
+    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=config.lr_gamma)
+
+    train_corpus, val_corpus = Corpus.load("train"), Corpus.load("val")
+    run = f"{config.backbone}-gem-margin{margin}-lr{config.lr:g}-seed{config.seed}"
+    directory = Path(config.out) / run
+    directory.mkdir(parents=True, exist_ok=True)
+    log(f"{run}: {len(train_corpus.cids)} train images, {len(val_corpus.cids)} val, device {device}")
+
+    baseline = validate(model, val_corpus, device, config.image_size, log)
+    log(f"epoch 0 (untrained): {baseline}")
+    _track(0, {f"val/{k}": v for k, v in baseline.items()} | {"p": model.pool.p.item()}, config, run)
+
+    best = baseline["mean_average_precision"]
+    best_path = directory / "best.pth"
+    _save(best_path, model, config, epoch=0, metrics=baseline)
+
+    for epoch in range(1, config.epochs + 1):
+        started = time.time()
+        # Re-mined every epoch against the *current* model, which is what keeps the
+        # negatives hard as the network improves.
+        tuples = sample_epoch(
+            train_corpus,
+            model,
+            query_size=config.query_size,
+            pool_size=config.pool_size,
+            neg_num=config.neg_num,
+            device=device,
+            seed=config.seed + epoch,
+            log=log,
+        )
+        loss = train_epoch(model, tuples, optimizer, margin, config.batch_size, device, log)
+        scheduler.step()
+        metrics = validate(model, val_corpus, device, config.image_size, log)
+
+        log(
+            f"epoch {epoch}/{config.epochs}: loss {loss:.4f} "
+            f"mAP {metrics['mean_average_precision']:.4f} p {model.pool.p.item():.4f} "
+            f"({time.time() - started:.0f}s)"
+        )
+        _track(
+            epoch,
+            {"train/loss": loss, "p": model.pool.p.item(), "lr": scheduler.get_last_lr()[0]}
+            | {f"val/{k}": v for k, v in metrics.items()},
+        )
+
+        _save(directory / "last.pth", model, config, epoch, metrics, optimizer)
+        if metrics["mean_average_precision"] > best:
+            best = metrics["mean_average_precision"]
+            _save(best_path, model, config, epoch, metrics)
+            log(f"  new best: {best:.4f}")
+
+    return best_path
+
+
+def _save(path: Path, model, config: TrainConfig, epoch: int, metrics: dict, optimizer=None) -> None:
+    """Checkpoint in the reference's layout, so the eval path can read it unchanged.
+
+    `RetrievalNet` names its submodules `features` and `pool`, which is exactly what
+    `descriptors/cnn/finetuned.py` strips and reads — a checkpoint written here is
+    therefore loadable by the same code that loads the published ones.
+    """
+    payload = {
+        "state_dict": model.state_dict(),
+        "meta": {
+            "architecture": config.backbone,
+            "pooling": "gem",
+            "outputdim": model.dim,
+            "whitening": False,
+            "epoch": epoch,
+            "metrics": metrics,
+            "config": {k: str(v) for k, v in asdict(config).items()},
+        },
+    }
+    if optimizer is not None:
+        payload["optimizer"] = optimizer.state_dict()
+    torch.save(payload, path)

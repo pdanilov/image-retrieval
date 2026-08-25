@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 from typing import Annotated, Literal
 
 import tyro
@@ -209,6 +210,58 @@ def evaluate_cmd(
         print("\n(not recorded: --no-record)")
 
 
+def train_cmd(
+    backbone: Literal["vgg16", "resnet101", "resnet50"] = "vgg16",
+    epochs: int = 30,
+    lr: float = 5e-7,
+    margin: float | None = None,
+    query_size: int = 2000,
+    pool_size: int = 22000,
+    image_size: int = 362,
+    seed: int = 0,
+    out: str = "data/runs",
+) -> None:
+    """Fine-tune a backbone for retrieval on retrieval-SfM-120k.
+
+    Trains GeM with a learnable exponent under a contrastive loss over SfM-mined
+    landmark pairs, re-mining hard negatives against the current model each epoch.
+    Checkpoints land in `out/<run>/`, in the same layout as the published ones, so
+    `cbir evaluate` can read them back.
+
+    This is hours of GPU, not minutes: roughly 15 minutes per epoch for vgg16 at the
+    default sizes. The corpus is a manual download — see `descriptors/cnn/sfm.py`.
+
+    Args:
+        backbone: Architecture to fine-tune, starting from its ImageNet weights.
+        epochs: Passes over the sampled tuples.
+        lr: Adam learning rate. The published value is 5e-7 and is calibrated to a
+            summed loss; raising it without also changing the reduction diverges.
+        margin: Contrastive hinge width. Defaults to the published value for the
+            backbone — 0.85 for resnet101, 0.7 for vgg16.
+        query_size: Tuples sampled per epoch.
+        pool_size: Images descriptors are extracted for, to mine negatives from.
+        image_size: Longest side during training. Evaluation still runs at 1024.
+        seed: Seeds sampling and initialization.
+        out: Directory for checkpoints.
+    """
+    # Deferred like `evaluate`'s runner import: `cbir results` should not pay for torch.
+    from cbir.training.loop import TrainConfig, train
+
+    config = TrainConfig(
+        backbone=backbone,
+        epochs=epochs,
+        lr=lr,
+        margin=margin,
+        query_size=query_size,
+        pool_size=pool_size,
+        image_size=image_size,
+        seed=seed,
+        out=Path(out),
+    )
+    best = train(config)
+    print(f"\nbest checkpoint: {best}")
+
+
 def track_cmd(current_only: bool = False) -> None:
     """Mirror `results/runs.jsonl` into trackio, for `trackio show --project cbir`.
 
@@ -236,6 +289,7 @@ def main() -> None:
         "evaluate": evaluate_cmd,
         "results": results_cmd,
         "track": track_cmd,
+        "train": train_cmd,
     }
     tyro.extras.subcommand_cli_from_dict(subcommands)
 
