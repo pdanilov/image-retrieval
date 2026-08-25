@@ -174,3 +174,34 @@ def test_sort_key_falls_back_when_a_run_has_no_k(runs_path, capsys):
 
     results_cmd()
     assert len(capsys.readouterr().out.splitlines()) == 4  # header, rule, two rows
+
+
+def test_sweep_varies_dim_for_neural_codes_not_k():
+    # Neural Codes has no `k` at all; its costly axis is the PCA output width. Sweeping
+    # `k` here would raise on a missing field rather than mean nothing.
+    from cbir.configs.cnn import NeuralCodesConfig
+
+    configs = sweep_configs(NeuralCodesConfig(backbone="alexnet"), "roxford5k", 10, (128, 512))
+
+    assert [config.descriptor.dim for config in configs] == [128, 512]
+    assert all(config.descriptor.backbone == "alexnet" for config in configs)
+
+
+def test_sweep_is_rejected_for_a_technique_with_no_axis():
+    from cbir.configs.cnn import NeuralCodesConfig
+
+    config = NeuralCodesConfig()
+    object.__setattr__(config, "__class__", type("Odd", (NeuralCodesConfig,), {"technique": "unswept"}))
+
+    with pytest.raises(ValueError, match="no sweepable axis"):
+        sweep_configs(config, "roxford5k", 10, (1, 2))
+
+
+def test_no_sweep_leaves_the_descriptor_untouched():
+    from cbir.configs.cnn import NeuralCodesConfig
+
+    original = NeuralCodesConfig(dim=256)
+    configs = sweep_configs(original, "roxford5k", 10, ())
+
+    assert len(configs) == 1
+    assert configs[0].descriptor is original

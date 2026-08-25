@@ -26,6 +26,26 @@ scope — a plotting helper should not pull OpenCV into a notebook kernel to lea
 number 128. It is fixed by SIFT itself, not a tunable.
 """
 
+CONV_CHANNELS = {
+    "alexnet": 256,
+    "vgg16": 512,
+    "vgg19": 512,
+    "resnet18": 512,
+    "resnet34": 512,
+    "resnet50": 2048,
+    "resnet101": 2048,
+}
+"""Each backbone's last conv width, which is its descriptor width when `dim` is unset.
+
+Duplicated from `descriptors/cnn/pooling.py` for the same reason `LOCAL_DIM` is
+duplicated from `rootsift.py`: that module imports torch at scope, and a plotting
+helper should not pull torch into a kernel to learn the number 2048. A test asserts
+the two maps agree, so the copy cannot drift.
+"""
+
+FC_DIM = 4096
+"""Neural Codes' fc6 width, the same for both backbones it supports."""
+
 
 def descriptor_dim(technique: str, params: dict[str, Any]) -> int | None:
     """Encoded vector length, or None for a technique whose formula isn't known here.
@@ -34,16 +54,25 @@ def descriptor_dim(technique: str, params: dict[str, Any]) -> int | None:
     `k` they are not: BoW at k=64 is a 64-dim vector, VLAD is 8192-dim and Fisher
     16384-dim, so a chart of mAP against `k` alone flatters BoW enormously.
     """
-    k = params.get("k")
-    if not isinstance(k, int):
-        return None
     match technique:
-        case "bow":
-            return k  # one weight per visual word
-        case "vlad":
-            return k * LOCAL_DIM  # one residual vector per word
-        case "fisher":
+        case "bow" | "vlad" | "fisher":
+            k = params.get("k")
+            if not isinstance(k, int):
+                return None
+            if technique == "bow":
+                return k  # one weight per visual word
+            if technique == "vlad":
+                return k * LOCAL_DIM  # one residual vector per word
             return 2 * k * LOCAL_DIM  # first- and second-order, per component
+        case "neural_codes" | "gem" | "rmac":
+            # The CNN tier states its width directly, and `dim=None` means "no PCA" --
+            # so the width is whatever the descriptor is natively.
+            dim = params.get("dim")
+            if isinstance(dim, int):
+                return dim
+            if technique == "neural_codes":
+                return FC_DIM
+            return CONV_CHANNELS.get(params.get("backbone", ""))
         case _:
             return None
 

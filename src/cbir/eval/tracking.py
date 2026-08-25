@@ -13,7 +13,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
-from cbir.eval.results import RunRecord
+from cbir.eval.results import RunRecord, format_param
 
 PROJECT = "cbir"
 
@@ -36,7 +36,7 @@ def flatten_metrics(record: RunRecord) -> dict[str, float]:
 
 def run_name(record: RunRecord) -> str:
     """`bow-roxford5k-k5000-seed0` — readable in `trackio list runs` without a lookup."""
-    params = "-".join(f"{key}{value}" for key, value in sorted(record.params.items()))
+    params = "-".join(f"{key}{format_param(value)}" for key, value in sorted(record.params.items()))
     return f"{record.technique}-{record.dataset}-{params}"
 
 

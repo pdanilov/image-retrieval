@@ -110,6 +110,25 @@ class RunRecord:
         return (self.dataset, self.technique, json.dumps(self.params, sort_keys=True))
 
 
+def format_param(value: Any) -> str:
+    """One param value for display: `(1.0, 0.7071, 0.5)` -> `1|0.707107|0.5`.
+
+    Sequences are the reason this exists — Python's default repr of a tuple carries
+    spaces, and both display sites (the results table and the trackio run name) use
+    spaces or dashes as their own separator. `%g` rather than a rounded format, so two
+    scale sets that differ only in a late digit still render differently; `runs.jsonl`
+    keeps full precision either way.
+
+    A JSON round-trip turns a tuple into a list, so both must render the same or a
+    reloaded row would not match a freshly built one.
+    """
+    if isinstance(value, list | tuple):
+        return "|".join(format_param(v) for v in value)
+    if isinstance(value, float):
+        return f"{value:g}"
+    return str(value)
+
+
 def append(record: RunRecord, path: Path | None = None) -> None:
     """Append one row. Creates `results/` and the file on first use."""
     path = path or RESULTS_PATH

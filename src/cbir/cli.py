@@ -7,18 +7,34 @@ from typing import Annotated, Literal
 
 import tyro
 
-from cbir.configs.classic import BoWConfig, ClassicConfig, FisherConfig, RunConfig, VLADConfig
+from cbir.configs.classic import BoWConfig, FisherConfig, VLADConfig
+from cbir.configs.cnn import NeuralCodesConfig, PooledConfig, RMACConfig
+from cbir.configs.presets import PRESETS
+from cbir.configs.run import DescriptorConfig, RunConfig
 from cbir.data.holdout import EvalDataset
 from cbir.data.revisitop import SUPPORTED, download
 from cbir.eval.metrics import Protocol
-from cbir.eval.results import RunRecord, latest, load
+from cbir.eval.results import RunRecord, format_param, latest, load
 
 PROTOCOLS: tuple[Protocol, ...] = ("easy", "medium", "hard")
 
 Descriptor = Annotated[
     Annotated[BoWConfig, tyro.conf.subcommand("bow")]
     | Annotated[VLADConfig, tyro.conf.subcommand("vlad")]
-    | Annotated[FisherConfig, tyro.conf.subcommand("fisher")],
+    | Annotated[FisherConfig, tyro.conf.subcommand("fisher")]
+    | Annotated[NeuralCodesConfig, tyro.conf.subcommand("neural-codes")]
+    | Annotated[PooledConfig, tyro.conf.subcommand("gem")]
+    | Annotated[RMACConfig, tyro.conf.subcommand("rmac")]
+    # Presets join the *same* union rather than getting their own command: they produce
+    # these very types, so `cbir evaluate gem-ft-r101` and `cbir evaluate gem --backbone
+    # resnet101 ...` differ only in how much you had to type. Built from the instances,
+    # so every field stays an overridable flag and the override re-validates --
+    # `gem-ft-r101 --p 3.0` is rejected exactly as spelling it out by hand would be.
+    #
+    # A `--preset` flag cannot do this: a technique's knobs are defined *inside* its
+    # subcommand, so there would be nowhere for `--scales` to live, and the descriptor
+    # subcommand would still be required alongside the flag.
+    | tyro.extras.subcommand_type_from_defaults(PRESETS),
     # Named "" so the technique reads as a bare subcommand (`cbir evaluate bow --k 5000`)
     # rather than `descriptor:bo-w-config`, and each technique's --help lists only its
     # own knobs.
@@ -41,7 +57,7 @@ def download_cmd(
 
 def _format_params(params: dict[str, object]) -> str:
     """`{"k": 5000, "seed": 0}` -> `k=5000 seed=0`, sorted so columns line up."""
-    return " ".join(f"{key}={value}" for key, value in sorted(params.items()))
+    return " ".join(f"{key}={format_param(value)}" for key, value in sorted(params.items()))
 
 
 def _render(rows: list[list[str]], headers: list[str]) -> str:
@@ -116,25 +132,48 @@ def results_cmd(
     print(_render([_row(record, metric) for record in records], headers))
 
 
-def sweep_configs(
-    descriptor: ClassicConfig, dataset: EvalDataset, mp_at_k: int, ks: tuple[int, ...]
-) -> list[RunConfig]:
-    """One `RunConfig` per swept `k`, or a single run when nothing is swept.
+SWEEP_AXIS: dict[str, str] = {
+    "bow": "k",
+    "vlad": "k",
+    "fisher": "k",
+    "neural_codes": "dim",
+    "gem": "dim",
+    "rmac": "dim",
+}
+"""The one field `--sweep` varies per technique — whatever costs something to change.
 
-    A sweep is just a list of configs (AGENTS.md: no sweeper plugin at this scale). `k`
-    is the only swept axis because it is the only one that costs anything to change —
-    it re-trains the codebook, while `power`/`intra_norm` are cheap post-processing
-    that can be compared by re-running the encode.
+For the classic tier that is `k`, which re-trains the codebook. Neural Codes has no
+`k` at all; its equivalent is the PCA output width, so sweeping `k` there would raise
+rather than mean nothing. A technique absent from this map cannot be swept.
+"""
+
+
+def sweep_configs(
+    descriptor: DescriptorConfig, dataset: EvalDataset, mp_at_k: int, values: tuple[int, ...]
+) -> list[RunConfig]:
+    """One `RunConfig` per swept value, or a single run when nothing is swept.
+
+    A sweep is just a list of configs (AGENTS.md: no sweeper plugin at this scale). Only
+    one axis is swept, the one that costs something to change — see `SWEEP_AXIS`. The
+    cheap post-processing knobs (`power`, `intra_norm`) are compared by re-running the
+    encode instead.
     """
-    values = ks or (descriptor.k,)
-    return [RunConfig(descriptor=replace(descriptor, k=k), dataset=dataset, mp_at_k=mp_at_k) for k in values]
+    if not values:
+        return [RunConfig(descriptor=descriptor, dataset=dataset, mp_at_k=mp_at_k)]
+
+    axis = SWEEP_AXIS.get(descriptor.technique)
+    if axis is None:
+        raise ValueError(f"{descriptor.technique} has no sweepable axis; run it one configuration at a time")
+    return [
+        RunConfig(descriptor=replace(descriptor, **{axis: value}), dataset=dataset, mp_at_k=mp_at_k) for value in values
+    ]
 
 
 def evaluate_cmd(
     descriptor: Descriptor,
     dataset: EvalDataset = "roxford5k",
     mp_at_k: int = 10,
-    sweep_k: tuple[int, ...] = (),
+    sweep: tuple[int, ...] = (),
     record: bool = True,
 ) -> None:
     """Train, encode, search and score one classic-tier configuration.
@@ -144,10 +183,12 @@ def evaluate_cmd(
     `cbir results`.
 
     Args:
-        descriptor: Technique to evaluate, with its own hyper-parameters.
+        descriptor: Technique to evaluate, with its own hyper-parameters — or a preset
+            from `configs/presets.py`, whose knobs remain overridable.
         dataset: Benchmark to evaluate on.
         mp_at_k: Cutoff for mean precision@k. mAP is always over the full ranking.
-        sweep_k: Run once per value, overriding the technique's `k`. Empty runs once.
+        sweep: Run once per value, overriding the technique's swept axis — `k` for the
+            classic tier, PCA `dim` for Neural Codes. Empty runs the config once.
         record: Append to results/runs.jsonl (and mirror to trackio). Off for scratch runs.
     """
     # Imported here, not at module scope: `runner` pulls in torch (via search/exact),
@@ -156,7 +197,7 @@ def evaluate_cmd(
     # function's annotations to build the subcommands.
     from cbir.eval.runner import run_all
 
-    configs = sweep_configs(descriptor, dataset, mp_at_k, sweep_k)
+    configs = sweep_configs(descriptor, dataset, mp_at_k, sweep)
     # `run_all` rather than a loop over `run`: it extracts once per dataset and shares
     # the result. Looping here would re-read ~20 GB of cached descriptors per point.
     records = run_all(configs, record=record, verbose=len(configs) > 1)
