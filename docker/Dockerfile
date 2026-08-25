@@ -27,12 +27,12 @@ ENV UV_LINK_MODE=copy \
 # the source, so editing a module does not re-resolve torch.
 COPY pyproject.toml uv.lock README.md ./
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked --no-install-project
+    uv sync --locked --no-install-project --extra tracking
 
 COPY docker/healthcheck.sh ./docker/healthcheck.sh
 COPY src ./src
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked
+    uv sync --locked --extra tracking
 
 # Runtime environment, set *after* the dependency layers so changing any of it rebuilds
 # only the tail of the image.
@@ -41,6 +41,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 #   CBIR_*_ROOT: the corpus and weights are bind-mounted, never baked in -- ~77 GB.
 #   HOME: the container runs as the host uid, which has no home directory here, so
 #     anything that caches to $HOME (torch hub, matplotlib) needs somewhere writable.
+#   TRACKIO_DIR: trackio defaults under $HOME, which is /tmp here and so would vanish
+#     with the container. Pointed at a mount instead -- and deliberately *not* into the
+#     repo, which AGENTS.md rules out: a SQLite file does not diff usefully in git.
 #   USER: that uid has no /etc/passwd entry either, and torch's inductor calls
 #     getpass.getuser() at *import* time to name its cache directory. Without this,
 #     `import torchvision` raises before any of our code runs. getuser() reads USER
@@ -51,7 +54,8 @@ ENV PATH="/app/.venv/bin:${PATH}" \
     PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
     CBIR_SFM_ROOT=/cache/cbir/sfm120k \
     CBIR_WEIGHTS_ROOT=/cache/cbir/weights \
-    HOME=/tmp
+    HOME=/tmp \
+    TRACKIO_DIR=/cache/trackio
 
 ENTRYPOINT ["cbir"]
 CMD ["--help"]
