@@ -131,3 +131,48 @@ def test_a_finetuned_checkpoint_cannot_be_a_starting_point():
     # be a second fine-tune wearing the first one's name.
     with pytest.raises(ValueError, match="already fine-tuned"):
         RetrievalNet("vgg16", weights="sfm120k")
+
+
+# --- heartbeat, which the container healthcheck reads -------------------------------
+
+
+def test_the_heartbeat_records_every_log_line(tmp_path):
+    from cbir.training.loop import _with_heartbeat
+
+    seen = []
+    logged = _with_heartbeat(seen.append, tmp_path / "heartbeat")
+
+    logged("epoch 3/30: loss 0.4")
+
+    assert seen == ["epoch 3/30: loss 0.4"]  # the original log still happens
+    written = (tmp_path / "heartbeat").read_text()
+    assert "epoch 3/30" in written
+    assert float(written.split()[0]) > 0  # a timestamp the probe can age
+
+
+def test_the_heartbeat_is_replaced_atomically(tmp_path):
+    # A probe reading mid-write would otherwise see a truncated file and, if it parsed
+    # the contents, call a healthy run dead.
+    from cbir.training.loop import _with_heartbeat
+
+    path = tmp_path / "heartbeat"
+    logged = _with_heartbeat(lambda _: None, path)
+    logged("first")
+    logged("second")
+
+    assert "second" in path.read_text()
+    assert not list(tmp_path.glob("*.tmp"))  # nothing left behind
+
+
+def test_an_unwritable_heartbeat_does_not_kill_the_run(tmp_path, monkeypatch):
+    # A read-only mount or a full disk must not end a run that is otherwise healthy --
+    # the heartbeat is diagnostics, not the work.
+    from cbir.training.loop import _with_heartbeat
+
+    seen = []
+    logged = _with_heartbeat(seen.append, tmp_path / "nope" / "heartbeat")
+    monkeypatch.setattr("pathlib.Path.mkdir", lambda *a, **k: (_ for _ in ()).throw(OSError("read-only")))
+
+    logged("still training")
+
+    assert seen == ["still training"]

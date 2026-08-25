@@ -1,0 +1,52 @@
+# Training and evaluation in a fixed environment, with the data left where it is.
+#
+# Nothing large is copied into the image: retrieval-SfM-120k is 77 GB and the ImageNet
+# and fine-tuned weights another 0.6 GB, so both are bind-mounted read-only from the host
+# cache. Only `data/runs` and `results` are writable, which are the two things a run
+# produces.
+services:
+  train:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: cbir:latest
+    # Run as the host user, not root. A container writing checkpoints as root leaves
+    # `data/runs` un-deletable from the host and un-writable by `cbir train` run outside
+    # the container -- both of which happened before this line existed.
+    user: "${CBIR_UID:-1000}:${CBIR_GID:-1000}"
+    # Resume makes this worth having: a crashed run restarts from `last.pth` rather than
+    # from epoch 0. Without resume a restart policy destroys work instead of recovering
+    # it — see `training/loop.py`.
+    restart: on-failure:3
+    command: ["train", "--backbone", "vgg16", "--weights", "caffe", "--epochs", "30"]
+    volumes:
+      - ${CBIR_CACHE:-${HOME}/.cache/cbir}:/cache/cbir:ro
+      - ./data/runs:/app/data/runs
+      - ./results:/app/results
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    # JPEG decoding is the bottleneck, not the GPU, so the container needs real CPU.
+    shm_size: "2gb"
+    # Progress, not liveness — a wedged decode keeps the process alive forever, and that
+    # is the failure this exists to catch. `start_period` covers the cold start: the
+    # first heartbeat only lands once the baseline validation begins logging.
+    healthcheck:
+      test: ["CMD", "/app/docker/healthcheck.sh"]
+      interval: 5m
+      timeout: 10s
+      retries: 2
+      start_period: 10m
+
+  # One-shot evaluation against roxford5k. `--profile eval` keeps it out of `up`, since
+  # it would otherwise contend with training for the same GPU.
+  evaluate:
+    extends:
+      service: train
+    restart: "no"
+    profiles: ["eval"]
+    command: ["evaluate", "gem-ft-r101"]

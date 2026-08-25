@@ -135,6 +135,7 @@ class PooledCNN:
         weights: WeightSource = "torchvision",
         last_pool: bool = True,
         checkpoint: str | None = None,
+        pretrained: bool = True,
     ) -> tuple[torch.nn.Module, FineTuned | None]:
         """Everything up to and including the last conv block, classifier discarded.
 
@@ -154,30 +155,35 @@ class PooledCNN:
         """
         import torchvision.models as tv
 
-        # Both alternative sources fill the torchvision architecture rather than
-        # defining their own, so each builds the stock one first and overwrites it.
+        # Both alternative sources fill the torchvision *architecture* rather than
+        # defining their own, so each builds the stock one and overwrites it. Built
+        # untrained: every parameter is about to be replaced (the loaders verify that
+        # strictly), so fetching torchvision's would download ~500 MB to discard it.
+        # Invisible on a machine with a warm torch cache; on a clean one it is a network
+        # round-trip, and a failed one takes the run with it.
         if weights == "caffe":
-            architecture, _ = PooledCNN._build(backbone, "torchvision", last_pool)
+            architecture, _ = PooledCNN._build(backbone, "torchvision", last_pool, pretrained=False)
             return load_caffe(architecture, backbone), None
         if weights == "sfm120k":
-            architecture, _ = PooledCNN._build(backbone, "torchvision", last_pool)
+            architecture, _ = PooledCNN._build(backbone, "torchvision", last_pool, pretrained=False)
             # `checkpoint` names a local file — how a network from `cbir train` is
             # evaluated. Absent, the published checkpoint for this backbone is used.
             return load_finetuned(architecture, backbone, checkpoint)
 
         match backbone:
             case "alexnet":
-                features = tv.alexnet(weights=tv.AlexNet_Weights.IMAGENET1K_V1).features
+                features = tv.alexnet(weights=tv.AlexNet_Weights.IMAGENET1K_V1 if pretrained else None).features
                 return (features if last_pool else torch.nn.Sequential(*list(features.children())[:-1])), None
             case "vgg16" | "vgg19":
                 builder = getattr(tv, backbone)
-                features = builder(weights=getattr(tv, f"{backbone.upper()}_Weights").IMAGENET1K_V1).features
+                choice = getattr(tv, f"{backbone.upper()}_Weights").IMAGENET1K_V1 if pretrained else None
+                features = builder(weights=choice).features
                 return (features if last_pool else torch.nn.Sequential(*list(features.children())[:-1])), None
             case "resnet18" | "resnet34" | "resnet50" | "resnet101":
                 # Same surgery for every depth; only the constructor and weights differ.
                 builder = getattr(tv, backbone)
-                weights = getattr(tv, f"ResNet{backbone.removeprefix('resnet')}_Weights").IMAGENET1K_V1
-                model = builder(weights=weights)
+                choice = getattr(tv, f"ResNet{backbone.removeprefix('resnet')}_Weights").IMAGENET1K_V1
+                model = builder(weights=choice if pretrained else None)
                 # Drop avgpool and fc; children()[:-2] ends at layer4's output.
                 return torch.nn.Sequential(*list(model.children())[:-2]), None
             case _:

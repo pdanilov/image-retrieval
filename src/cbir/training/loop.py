@@ -175,6 +175,19 @@ def _track(step: int, values: dict[str, float], config: TrainConfig | None = Non
         return
 
 
+HEARTBEAT = "heartbeat"
+"""File touched on every log line, at a fixed path under the run root.
+
+A liveness probe that only asks "is the process alive" passes a wedged JPEG decode or a
+hung CUDA call forever. What distinguishes a working run from a stuck one is *progress*,
+so the trainer emits it: mining, training and validation all log every couple of thousand
+items, which is minutes apart at worst. A probe comparing this file's age against that
+interval separates the two.
+
+Deliberately at the run *root* rather than inside the per-run directory: a container runs
+one training job and its healthcheck should not have to know the run's generated name."""
+
+
 def _log(message: str) -> None:
     """Print and flush.
 
@@ -189,6 +202,7 @@ def train(config: TrainConfig, device: str | None = None, log=_log) -> Path:
     """Run the whole schedule, checkpointing each epoch. Returns the best checkpoint."""
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     torch.manual_seed(config.seed)
+    log = _with_heartbeat(log, Path(config.out) / HEARTBEAT)
 
     model = RetrievalNet(config.backbone, p=config.p, weights=config.weights).to(device)
     margin = config.resolved_margin()
@@ -262,6 +276,28 @@ def train(config: TrainConfig, device: str | None = None, log=_log) -> Path:
             _save(last_path, model, config, epoch, metrics, optimizer, scheduler, best)
 
     return best_path
+
+
+def _with_heartbeat(log, path: Path):
+    """Wrap `log` so every message also refreshes the heartbeat file.
+
+    Written through a temporary file and replaced atomically: a probe that reads the file
+    mid-write would otherwise see an empty one and, if it parsed the contents, call a
+    healthy run dead.
+    """
+
+    def logged(message: str) -> None:
+        log(message)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_suffix(".tmp")
+            temporary.write_text(f"{time.time():.0f} {message}\n")
+            temporary.replace(path)
+        except OSError:
+            # A read-only mount or a full disk must not end a run that is otherwise fine.
+            pass
+
+    return logged
 
 
 def _resume(path: Path, model, optimizer, scheduler, config: TrainConfig, device: str, log) -> tuple[int, float] | None:
