@@ -67,6 +67,11 @@ class TrainConfig:
     from the recipe before the first step, and the frozen tier already measured how much
     that matters: resnet101 GeM scores 0.347 on torchvision weights against 0.461 on
     Caffe. They are a manual download; see `descriptors/cnn/weights.py`.
+
+    `resume` picks up `last.pth` from the run directory when one is there, which is what
+    makes a restart policy worth having: without it a crash at epoch 25 restarts from
+    zero, and a supervisor that restarts a non-resumable job is worse than no supervisor.
+    Turn it off only to force a fresh run into a directory that already holds one.
     """
 
     backbone: Backbone = "vgg16"
@@ -82,6 +87,7 @@ class TrainConfig:
     pool_size: int = POOL_SIZE
     neg_num: int = NEG_NUM
     p: float = 3.0
+    resume: bool = True
     seed: int = 0
     out: Path = field(default=Path("data/runs"))
 
@@ -195,15 +201,24 @@ def train(config: TrainConfig, device: str | None = None, log=_log) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     log(f"{run}: {len(train_corpus.cids)} train images, {len(val_corpus.cids)} val, device {device}")
 
-    baseline = validate(model, val_corpus, device, config.image_size, log)
-    log(f"epoch 0 (untrained): {baseline}")
-    _track(0, {f"val/{k}": v for k, v in baseline.items()} | {"p": model.pool.p.item()}, config, run)
-
-    best = baseline["mean_average_precision"]
     best_path = directory / "best.pth"
-    _save(best_path, model, config, epoch=0, metrics=baseline)
+    last_path = directory / "last.pth"
+    start = 1
 
-    for epoch in range(1, config.epochs + 1):
+    resumed = _resume(last_path, model, optimizer, scheduler, config, device, log) if config.resume else None
+    if resumed is not None:
+        start, best = resumed
+        _track(start - 1, {}, config, run)
+    else:
+        # Measured before any training so every later epoch has something to be better
+        # than — and because a baseline that is already wrong catches a broken init.
+        baseline = validate(model, val_corpus, device, config.image_size, log)
+        log(f"epoch 0 (untrained): {baseline}")
+        _track(0, {f"val/{k}": v for k, v in baseline.items()} | {"p": model.pool.p.item()}, config, run)
+        best = baseline["mean_average_precision"]
+        _save(best_path, model, config, epoch=0, metrics=baseline)
+
+    for epoch in range(start, config.epochs + 1):
         started = time.time()
         # Re-mined every epoch against the *current* model, which is what keeps the
         # negatives hard as the network improves.
@@ -237,21 +252,63 @@ def train(config: TrainConfig, device: str | None = None, log=_log) -> Path:
             | {"gpu/reserved_gb": reserved},
         )
 
-        _save(directory / "last.pth", model, config, epoch, metrics, optimizer)
+        _save(last_path, model, config, epoch, metrics, optimizer, scheduler, best)
         if metrics["mean_average_precision"] > best:
             best = metrics["mean_average_precision"]
             _save(best_path, model, config, epoch, metrics)
             log(f"  new best: {best:.4f}")
+            # Rewritten so an interrupt between the two saves cannot leave `last.pth`
+            # claiming a `best` that no file on disk matches.
+            _save(last_path, model, config, epoch, metrics, optimizer, scheduler, best)
 
     return best_path
 
 
-def _save(path: Path, model, config: TrainConfig, epoch: int, metrics: dict, optimizer=None) -> None:
+def _resume(path: Path, model, optimizer, scheduler, config: TrainConfig, device: str, log) -> tuple[int, float] | None:
+    """Restore a run from `last.pth`, returning the epoch to start at and the best so far.
+
+    Returns `None` when there is nothing to resume, so a first run is the same code path.
+
+    Mining is seeded `config.seed + epoch`, so a run resumed at epoch N draws exactly the
+    tuples a fresh run would have drawn there — the schedule is a function of the epoch
+    number, not of how many times the process started.
+    """
+    if not path.exists():
+        return None
+
+    payload = torch.load(path, map_location=device, weights_only=False)
+    architecture = payload["meta"]["architecture"]
+    if architecture != config.backbone:
+        raise ValueError(f"{path} holds a {architecture} run; refusing to resume it as {config.backbone}")
+
+    model.load_state_dict(payload["state_dict"])
+    optimizer.load_state_dict(payload["optimizer"])
+    scheduler.load_state_dict(payload["scheduler"])
+    done = int(payload["meta"]["epoch"])
+    best = float(payload["best"])
+    log(f"resuming from epoch {done} (best mAP {best:.4f}, p {model.pool.p.item():.4f})")
+    return done + 1, best
+
+
+def _save(
+    path: Path,
+    model,
+    config: TrainConfig,
+    epoch: int,
+    metrics: dict,
+    optimizer=None,
+    scheduler=None,
+    best: float | None = None,
+) -> None:
     """Checkpoint in the reference's layout, so the eval path can read it unchanged.
 
     `RetrievalNet` names its submodules `features` and `pool`, which is exactly what
     `descriptors/cnn/finetuned.py` strips and reads — a checkpoint written here is
     therefore loadable by the same code that loads the published ones.
+
+    `optimizer`/`scheduler`/`best` are written only for `last.pth`, the resume point.
+    `best.pth` is the artifact that gets evaluated and stays free of training state —
+    which also keeps it a third of the size.
     """
     payload = {
         "state_dict": model.state_dict(),
@@ -267,4 +324,8 @@ def _save(path: Path, model, config: TrainConfig, epoch: int, metrics: dict, opt
     }
     if optimizer is not None:
         payload["optimizer"] = optimizer.state_dict()
+    if scheduler is not None:
+        payload["scheduler"] = scheduler.state_dict()
+    if best is not None:
+        payload["best"] = best
     torch.save(payload, path)
