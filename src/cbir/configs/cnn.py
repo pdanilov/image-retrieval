@@ -140,7 +140,9 @@ class PooledConfig:
         # is an hour of GPU. `PooledCNN` re-checks the first of them, since it is a
         # statement about the network and not about this config.
         if (self.p == "learned") != (self.weights == "sfm120k"):
-            raise ValueError(f"p='learned' and weights='sfm120k' go together; got p={self.p!r}, {self.weights=}")
+            raise ValueError(
+                f"p='learned' and weights='sfm120k' go together; got p={self.p!r}, weights={self.weights!r}"
+            )
         if self.whiten_source == "learned":
             if self.weights != "sfm120k":
                 raise ValueError("whiten_source='learned' needs a fine-tuned checkpoint to read it from")

@@ -34,6 +34,24 @@ uv run cbir evaluate --dataset roxford5k fisher --k 64
 uv run cbir evaluate --dataset roxford5k --sweep 16 64 256 vlad --seed 0
 ```
 
+### Presets
+
+The interesting configurations carry up to ten flags, and the fine-tuned ones only work
+in one combination. Every row this README quotes is available by name:
+
+```
+uv run cbir evaluate-preset gem-ft-r101
+uv run cbir evaluate-preset gem-ft-r101 --scales 1.0   # a preset is a starting point
+uv run cbir evaluate-preset --help                     # list them
+```
+
+They live in `configs/presets.py` as config *instances*, not YAML — so each one is
+type-checked at import, validates on construction, and an override re-validates:
+`--p 3.0` on a fine-tuned preset is rejected rather than quietly evaluating the network
+at a pooling it was never trained for. `tests/configs/test_presets.py` holds every preset
+to a row already in `results/runs.jsonl`, so a preset cannot drift from the configuration
+that was actually measured.
+
 Each run extracts RootSIFT, trains the codebook **on the other dataset**, encodes the
 database and the bbx-cropped queries, searches exactly, scores all three protocols, and
 appends a row to `results/runs.jsonl`. Read rows back with `cbir results`

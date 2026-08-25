@@ -9,6 +9,7 @@ import tyro
 
 from cbir.configs.classic import BoWConfig, FisherConfig, VLADConfig
 from cbir.configs.cnn import NeuralCodesConfig, PooledConfig, RMACConfig
+from cbir.configs.presets import PRESETS
 from cbir.configs.run import DescriptorConfig, RunConfig
 from cbir.data.holdout import EvalDataset
 from cbir.data.revisitop import SUPPORTED, download
@@ -29,6 +30,17 @@ Descriptor = Annotated[
     # own knobs.
     tyro.conf.arg(name=""),
 ]
+
+Preset = Annotated[
+    tyro.extras.subcommand_type_from_defaults(PRESETS),
+    tyro.conf.arg(name=""),
+]
+"""The same descriptors, pre-filled: one subcommand per entry in `PRESETS`.
+
+Built from the instances themselves, so every field stays an overridable flag and the
+override re-validates -- `cbir evaluate-preset gem-ft-r101 --p 3.0` is rejected exactly
+as spelling that combination out by hand would be.
+"""
 
 
 def download_cmd(
@@ -197,6 +209,29 @@ def evaluate_cmd(
         print("\n(not recorded: --no-record)")
 
 
+def evaluate_preset_cmd(
+    descriptor: Preset,
+    dataset: EvalDataset = "roxford5k",
+    mp_at_k: int = 10,
+    sweep: tuple[int, ...] = (),
+    record: bool = True,
+) -> None:
+    """Evaluate a named configuration from `configs/presets.py`.
+
+    Identical to `evaluate` in every respect but where the descriptor comes from: a
+    preset is one of the configurations the README quotes, under a name. Its fields are
+    still flags, so a preset is a starting point rather than a fixed recipe.
+
+    Args:
+        descriptor: Preset to evaluate; its own knobs remain overridable.
+        dataset: Benchmark to evaluate on.
+        mp_at_k: Cutoff for mean precision@k. mAP is always over the full ranking.
+        sweep: Run once per value, overriding the technique's swept axis. Empty runs once.
+        record: Append to results/runs.jsonl (and mirror to trackio). Off for scratch runs.
+    """
+    evaluate_cmd(descriptor, dataset=dataset, mp_at_k=mp_at_k, sweep=sweep, record=record)
+
+
 def track_cmd(current_only: bool = False) -> None:
     """Mirror `results/runs.jsonl` into trackio, for `trackio show --project cbir`.
 
@@ -222,6 +257,7 @@ def main() -> None:
     subcommands = {
         "download": download_cmd,
         "evaluate": evaluate_cmd,
+        "evaluate-preset": evaluate_preset_cmd,
         "results": results_cmd,
         "track": track_cmd,
     }
