@@ -187,7 +187,17 @@ def _track(step: int, values: dict[str, float], config: TrainConfig | None = Non
         return
     try:
         if name is not None and config is not None:
-            trackio.init(project=PROJECT, name=name, config={k: str(v) for k, v in asdict(config).items()})
+            trackio.init(
+                project=PROJECT,
+                name=name,
+                # `allow` rather than the default `never`: the run name is derived from
+                # the configuration, so a resumed run reuses it, and `never` would file
+                # each restart as a separate run -- one model's curve split into as many
+                # pieces as the job happened to be interrupted. Creates the run when it
+                # is genuinely new, so a first run is still the same call.
+                resume="allow",
+                config={k: str(v) for k, v in asdict(config).items()},
+            )
         trackio.log(values, step=step)
     except Exception:
         # A tracking failure must never cost a training run that took hours.

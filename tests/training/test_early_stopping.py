@@ -7,6 +7,8 @@ validation score, and that bookkeeping is what decides whether hours of GPU get 
 
 from __future__ import annotations
 
+import sys
+import types
 from types import SimpleNamespace
 
 import pytest
@@ -124,3 +126,26 @@ def test_whitening_can_be_turned_off(scores, tmp_path, monkeypatch):
     config = TrainConfig(epochs=1, out=tmp_path, resume=False, whiten=False)
 
     train(config, device="cpu", log=lambda *_: None)
+
+
+def test_a_resumed_run_continues_one_trackio_curve(monkeypatch):
+    """Otherwise one model's history arrives as a new run per interruption."""
+    calls = []
+    fake = types.SimpleNamespace(init=lambda **kw: calls.append(kw), log=lambda *a, **k: None)
+    monkeypatch.setitem(sys.modules, "trackio", fake)
+
+    loop._track(7, {"val/map": 0.5}, TrainConfig(backbone="vgg16"), "vgg16-gem-margin0.7-lr1e-06-seed0")
+
+    assert calls[0]["resume"] == "allow"
+    assert calls[0]["name"] == "vgg16-gem-margin0.7-lr1e-06-seed0"
+
+
+def test_tracking_failures_never_reach_the_caller(monkeypatch):
+    """A dashboard is not worth losing hours of training over."""
+
+    def explode(**kw):
+        raise RuntimeError("dashboard is down")
+
+    monkeypatch.setitem(sys.modules, "trackio", types.SimpleNamespace(init=explode, log=explode))
+
+    loop._track(7, {"val/map": 0.5}, TrainConfig(), "run")  # must not raise
