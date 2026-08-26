@@ -40,6 +40,7 @@ from cbir.training.tuples import (
     load_tensor,
     sample_epoch,
 )
+from cbir.training.whitening import PAIRS, attach, fit
 
 PROJECT = "cbir-train"
 """Kept apart from the `cbir` project that holds evaluation runs: these are curves over
@@ -68,6 +69,12 @@ class TrainConfig:
     that matters: resnet101 GeM scores 0.347 on torchvision weights against 0.461 on
     Caffe. They are a manual download; see `descriptors/cnn/weights.py`.
 
+    `whiten` fits the supervised projection onto `best.pth` once training ends. On by
+    default because a checkpoint without one is not finished: the network is only half of
+    what the reference publishes, and evaluating it against held-out PCA instead measured
+    0.5689 Medium where its own projection gives 0.6020. It costs one extraction pass per
+    scale variant -- tens of minutes against the hours the training itself took.
+
     `patience` stops the run when validation mAP has not improved on the running best by
     more than `min_delta` for that many epochs. The reference has no such rule — it runs
     a fixed 100 epochs — so this is a departure, made because the curve decelerates to
@@ -95,6 +102,8 @@ class TrainConfig:
     pool_size: int = POOL_SIZE
     neg_num: int = NEG_NUM
     p: float = 3.0
+    whiten: bool = True
+    whiten_pairs: int = PAIRS
     patience: int | None = 5
     min_delta: float = 0.001
     resume: bool = True
@@ -299,6 +308,17 @@ def train(config: TrainConfig, device: str | None = None, log=_log) -> Path:
                 f"(best {best:.4f}, last real gain at epoch {best_epoch})"
             )
             break
+
+    if config.whiten:
+        # Freed first: the trained model, its gradients and Adam's two moments are all
+        # still resident, and fitting loads a second copy of the network. Not `tuples`,
+        # which is unbound when the loop never ran -- re-invoking a finished run to fit
+        # its whitening is the case that reaches here without training anything.
+        del model, optimizer
+        if device.startswith("cuda"):
+            torch.cuda.empty_cache()
+        log("fitting supervised whitening onto the best checkpoint")
+        attach(best_path, fit(str(best_path), config.backbone, pairs=config.whiten_pairs, seed=config.seed, log=log))
 
     return best_path
 

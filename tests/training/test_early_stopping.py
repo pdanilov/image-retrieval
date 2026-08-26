@@ -39,6 +39,10 @@ def scores(monkeypatch):
         monkeypatch.setattr(loop, "train_epoch", lambda *a, **k: 0.1)
         monkeypatch.setattr(loop, "_track", lambda *a, **k: None)
         monkeypatch.setattr(loop, "validate", lambda *a, **k: {"mean_average_precision": next(seen)})
+        # Stubbed by default: fitting the whitening is a real extraction pass, and these
+        # tests are about when the loop stops. The two that care re-patch it themselves.
+        monkeypatch.setattr(loop, "fit", lambda *a, **k: {})
+        monkeypatch.setattr(loop, "attach", lambda *a, **k: None)
 
     return install
 
@@ -97,3 +101,26 @@ def test_patience_none_disables_the_rule(scores, tmp_path):
     best_path = train(config, device="cpu", log=lambda *_: None)
 
     assert _epochs_run(best_path.parent) == 4
+
+
+def test_the_whitening_is_fitted_onto_the_best_checkpoint(scores, tmp_path, monkeypatch):
+    """Training a network without its projection leaves the job half done."""
+    scores([0.50, 0.60])
+    seen = {}
+    monkeypatch.setattr(loop, "fit", lambda path, backbone, **kw: seen.update(path=path, backbone=backbone) or {})
+    monkeypatch.setattr(loop, "attach", lambda path, fitted: seen.update(attached=path))
+    config = TrainConfig(epochs=1, out=tmp_path, resume=False, whiten=True)
+
+    best_path = train(config, device="cpu", log=lambda *_: None)
+
+    assert seen["path"] == str(best_path)  # the best checkpoint, never `last.pth`
+    assert seen["attached"] == best_path
+    assert seen["backbone"] == "vgg16"
+
+
+def test_whitening_can_be_turned_off(scores, tmp_path, monkeypatch):
+    scores([0.50, 0.60])
+    monkeypatch.setattr(loop, "fit", lambda *a, **k: pytest.fail("should not fit"))
+    config = TrainConfig(epochs=1, out=tmp_path, resume=False, whiten=False)
+
+    train(config, device="cpu", log=lambda *_: None)

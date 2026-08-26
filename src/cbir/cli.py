@@ -220,6 +220,8 @@ def train_cmd(
     pool_size: int = 22000,
     image_size: int = 362,
     seed: int = 0,
+    whiten: bool = True,
+    whiten_pairs: int = 20000,
     patience: int | None = 5,
     min_delta: float = 0.001,
     resume: bool = True,
@@ -249,6 +251,10 @@ def train_cmd(
         pool_size: Images descriptors are extracted for, to mine negatives from.
         image_size: Longest side during training. Evaluation still runs at 1024.
         seed: Seeds sampling and initialization.
+        whiten: Fit the supervised projection onto `best.pth` when training ends, which
+            is what makes the checkpoint complete — see `cbir whiten`. Turning it off
+            leaves a network that has to be evaluated against held-out PCA instead.
+        whiten_pairs: Matching pairs the projection is fitted on.
         patience: Stop after this many epochs with no validation-mAP gain larger than
             `min_delta`. `None` runs the full schedule, as the reference does.
         min_delta: How much an epoch must beat the running best by to count as progress.
@@ -271,6 +277,8 @@ def train_cmd(
         pool_size=pool_size,
         image_size=image_size,
         seed=seed,
+        whiten=whiten,
+        whiten_pairs=whiten_pairs,
         patience=patience,
         min_delta=min_delta,
         resume=resume,
