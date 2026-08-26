@@ -280,6 +280,47 @@ def train_cmd(
     print(f"\nbest checkpoint: {best}")
 
 
+def whiten_cmd(
+    checkpoint: str,
+    backbone: Literal["vgg16", "resnet101", "resnet50"] = "vgg16",
+    pairs: int = 20000,
+    max_side: int = 1024,
+    seed: int = 0,
+) -> None:
+    """Fit supervised whitening for a trained checkpoint and write it into the file.
+
+    `cbir train` fine-tunes the network but not the projection applied to its output —
+    the reference fits that separately, on SfM matching pairs, after training. Without it
+    a trained checkpoint has to fall back on PCA over the held-out set, which measured
+    0.5747 Medium against 0.6073 for the same published network with its own projection.
+
+    Writes `meta['Lw']` in place, under the key the loader already reads, so afterwards
+    the checkpoint scores with `--whiten --whiten-source learned` exactly as a published
+    one does. Both the single- and multi-scale variants are fitted, since they are not
+    interchangeable.
+
+    This is one extraction pass per variant at evaluation resolution — tens of minutes,
+    not minutes.
+
+    Args:
+        checkpoint: The `best.pth` to fit for and write into.
+        backbone: Architecture the checkpoint holds.
+        pairs: Matching pairs to fit on. Must exceed the descriptor width, and wants to
+            exceed it comfortably; the cost is roughly two images extracted per pair.
+        max_side: Longest image side during extraction. Match what evaluation uses.
+        seed: Seeds the pair sample.
+    """
+    from cbir.training.whitening import attach, fit
+
+    path = Path(checkpoint)
+    if not path.exists():
+        raise FileNotFoundError(f"checkpoint {path} not found")
+
+    fitted = fit(checkpoint, backbone, pairs=pairs, max_side=max_side, seed=seed)
+    attach(path, fitted)
+    print(f"\nwrote Lw ({', '.join(sorted(fitted))}) into {path}")
+
+
 def track_cmd(current_only: bool = False) -> None:
     """Mirror `results/runs.jsonl` into trackio, for `trackio show --project cbir`.
 
@@ -308,6 +349,7 @@ def main() -> None:
         "results": results_cmd,
         "track": track_cmd,
         "train": train_cmd,
+        "whiten": whiten_cmd,
     }
     tyro.extras.subcommand_cli_from_dict(subcommands)
 
