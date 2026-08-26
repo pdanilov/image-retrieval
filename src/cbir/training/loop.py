@@ -202,22 +202,41 @@ def train_epoch(model, tuples, optimizer, margin: float, batch_size: int, device
     return total / max(len(tuples), 1)
 
 
-def _track(step: int, values: dict[str, float], config: TrainConfig | None = None, name: str | None = None) -> None:
-    """Mirror a curve point into trackio, never raising into the caller."""
+def _track(
+    step: int,
+    values: dict[str, float],
+    config: TrainConfig | None = None,
+    name: str | None = None,
+    fresh: bool = False,
+) -> None:
+    """Mirror a curve point into trackio, never raising into the caller.
+
+    `fresh` distinguishes the two ways a run reaches epoch 1, which look identical from
+    inside trackio and mean opposite things. A run that resumed from `last.pth` is the
+    same run continuing and must append to its curve. A run that starts at epoch 1 with
+    no checkpoint to resume is a *different* run that happens to share a name -- the name
+    is derived from the configuration, so re-running a deleted experiment reuses it -- and
+    appending there splices two unrelated histories into one series. That is not
+    hypothetical: resnet101 diverged, was fixed and restarted, and the retry appended
+    onto the collapse it was meant to replace.
+    """
     try:
         import trackio
     except ImportError:
         return
     try:
         if name is not None and config is not None:
+            if fresh:
+                # Deleted rather than left beside the new one: the history described
+                # checkpoints that no longer exist, so nothing can be compared against it.
+                trackio.SQLiteStorage.delete_run(PROJECT, name)
             trackio.init(
                 project=PROJECT,
                 name=name,
-                # `allow` rather than the default `never`: the run name is derived from
-                # the configuration, so a resumed run reuses it, and `never` would file
-                # each restart as a separate run -- one model's curve split into as many
-                # pieces as the job happened to be interrupted. Creates the run when it
-                # is genuinely new, so a first run is still the same call.
+                # `allow` rather than the default `never`: a resumed run reuses its
+                # name, and `never` would file each interruption as a separate run --
+                # one model's curve split into as many pieces as the job was stopped.
+                # After a `fresh` delete there is nothing to resume, so this creates.
                 resume="allow",
                 config={k: str(v) for k, v in asdict(config).items()},
             )
@@ -274,13 +293,19 @@ def train(config: TrainConfig, device: str | None = None, log=_log) -> Path:
     resumed = _resume(last_path, model, optimizer, scheduler, config, device, log) if config.resume else None
     if resumed is not None:
         start, best, best_epoch = resumed
-        _track(start - 1, {}, config, run)
+        _track(start - 1, {}, config, run)  # not fresh: this curve continues
     else:
         # Measured before any training so every later epoch has something to be better
         # than — and because a baseline that is already wrong catches a broken init.
         baseline = validate(model, val_corpus, device, config.image_size, log)
         log(f"epoch 0 (untrained): {baseline}")
-        _track(0, {f"val/{k}": v for k, v in baseline.items()} | {"p": model.pool.p.item()}, config, run)
+        _track(
+            0,
+            {f"val/{k}": v for k, v in baseline.items()} | {"p": model.pool.p.item()},
+            config,
+            run,
+            fresh=True,
+        )
         best = baseline["mean_average_precision"]
         best_epoch = 0
         _save(best_path, model, config, epoch=0, metrics=baseline)

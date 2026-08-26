@@ -149,3 +149,51 @@ def test_tracking_failures_never_reach_the_caller(monkeypatch):
     monkeypatch.setitem(sys.modules, "trackio", types.SimpleNamespace(init=explode, log=explode))
 
     loop._track(7, {"val/map": 0.5}, TrainConfig(), "run")  # must not raise
+
+
+def _fake_trackio(monkeypatch, calls):
+    fake = types.SimpleNamespace(
+        init=lambda **kw: calls.append(("init", kw)),
+        log=lambda *a, **k: None,
+        SQLiteStorage=types.SimpleNamespace(delete_run=lambda p, n: calls.append(("delete", p, n))),
+    )
+    monkeypatch.setitem(sys.modules, "trackio", fake)
+
+
+def test_a_fresh_run_discards_the_stale_curve_under_its_name(monkeypatch):
+    """The name comes from the config, so a re-run of a deleted experiment reuses it."""
+    calls = []
+    _fake_trackio(monkeypatch, calls)
+
+    loop._track(0, {"val/map": 0.6}, TrainConfig(), "resnet101-gem-margin0.85-lr5e-07-seed0", fresh=True)
+
+    assert calls[0][0] == "delete"
+    assert calls[0][2] == "resnet101-gem-margin0.85-lr5e-07-seed0"
+    assert calls[1][0] == "init"
+
+
+def test_a_resumed_run_keeps_its_curve(monkeypatch):
+    """The case the delete must never touch: the same run continuing."""
+    calls = []
+    _fake_trackio(monkeypatch, calls)
+
+    loop._track(30, {}, TrainConfig(), "vgg16-gem-margin0.7-lr1e-06-seed0")
+
+    assert [c[0] for c in calls] == ["init"]
+
+
+def test_a_failed_delete_does_not_stop_training(monkeypatch):
+    def explode(*a, **k):
+        raise RuntimeError("locked")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "trackio",
+        types.SimpleNamespace(
+            init=lambda **kw: None,
+            log=lambda *a, **k: None,
+            SQLiteStorage=types.SimpleNamespace(delete_run=explode),
+        ),
+    )
+
+    loop._track(0, {"val/map": 0.6}, TrainConfig(), "run", fresh=True)  # must not raise
