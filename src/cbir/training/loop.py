@@ -147,9 +147,32 @@ def validate(model: torch.nn.Module, corpus: Corpus, device: str, image_size: in
     return {key: float(value) for key, value in scores.items()}
 
 
+def _freeze_batchnorm(module: torch.nn.Module) -> None:
+    """Put a BatchNorm layer back into eval mode, leaving the rest of the model training.
+
+    Every image here goes through its own forward pass -- they keep their aspect ratios,
+    so they cannot be stacked -- which means a BatchNorm in training mode normalizes each
+    image by *its own* spatial statistics and folds those into its running estimates. On
+    resnet101's 104 BatchNorms that destroys the pretrained features outright: measured,
+    validation mAP fell from 0.6465 untrained to 0.1545 by the fourth epoch while the
+    training loss went on falling.
+
+    Freezing them uses the ImageNet statistics for normalization and leaves them alone,
+    which is what the reference does (`set_batchnorm_eval`). The affine weight and bias
+    stay trainable, exactly as there -- only the running statistics are pinned.
+
+    VGG16 has no BatchNorm at all, which is why it fine-tuned to the published number
+    with this bug present and gave no sign of it.
+    """
+    if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
+        module.eval()
+
+
 def train_epoch(model, tuples, optimizer, margin: float, batch_size: int, device: str, log=None) -> float:
     """One pass over the epoch's tuples. Returns the mean per-tuple loss."""
     model.train()
+    # After `train()`, never before: `train()` would put them straight back.
+    model.apply(_freeze_batchnorm)
     optimizer.zero_grad()
     total = 0.0
 
