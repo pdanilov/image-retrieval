@@ -1,9 +1,14 @@
 """BatchNorm during training, which is the difference between resnet101 and rubbish.
 
-Every image gets its own forward pass here, so a BatchNorm left in training mode would
-normalize each one by its own statistics and fold those into its running estimates. VGG16
-has no BatchNorm and so cannot catch this; resnet101 has 104 and collapsed from 0.6465
-mAP to 0.1545 when it was missed.
+A tuple is seven images, but each gets its own forward pass -- they keep their aspect
+ratios, so they cannot be stacked -- and a BatchNorm left in training mode therefore sees
+N=1 and becomes instance normalization. The fatal consequence is not that its statistics
+are noisy (these layers see a median 391 spatial positions per channel) but that training
+and evaluation stop computing the same function, so the loss optimizes a network that
+validation never scores.
+
+VGG16 has no BatchNorm and so cannot catch this; resnet101 has 104 and collapsed from
+0.6465 mAP to 0.1545 when it was missed.
 """
 
 from __future__ import annotations
@@ -48,7 +53,11 @@ def tuples():
 
 
 def test_running_statistics_are_not_touched_by_training(tuples):
-    """The batch is one image, so anything estimated from it is noise."""
+    """The batch is one image, so what it estimates is biased, not merely imprecise.
+
+    Population variance is within-image plus between-image variance; N=1 can only see
+    the first, so the running estimate is dragged consistently downward.
+    """
     model = _Tiny()
     before_mean = model.bn.running_mean.clone()
     before_var = model.bn.running_var.clone()

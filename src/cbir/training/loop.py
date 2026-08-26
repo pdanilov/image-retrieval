@@ -150,12 +150,25 @@ def validate(model: torch.nn.Module, corpus: Corpus, device: str, image_size: in
 def _freeze_batchnorm(module: torch.nn.Module) -> None:
     """Put a BatchNorm layer back into eval mode, leaving the rest of the model training.
 
-    Every image here goes through its own forward pass -- they keep their aspect ratios,
-    so they cannot be stacked -- which means a BatchNorm in training mode normalizes each
-    image by *its own* spatial statistics and folds those into its running estimates. On
-    resnet101's 104 BatchNorms that destroys the pretrained features outright: measured,
-    validation mAP fell from 0.6465 untrained to 0.1545 by the fourth epoch while the
-    training loss went on falling.
+    Every image here goes through its own forward pass -- a tuple is seven images, but
+    they keep their aspect ratios and so cannot be stacked, and the `cat` happens after
+    the forwards, on descriptors. A BatchNorm in training mode therefore sees N=1 and
+    degenerates into instance normalization.
+
+    Two separate harms follow, and the second is the fatal one:
+
+      * The running estimates drift, and drift *systematically* rather than noisily.
+        Population variance is within-image plus between-image; a batch of one can only
+        ever measure the within-image part, so `running_var` is biased downward -- after
+        60 single-image forwards it sat at a median 0.952x its ImageNet value with 64.5%
+        of channels below 1.0. (Not a small-sample effect: these layers see a median 391
+        spatial positions per channel.)
+      * Training and evaluation stop computing the same function. Training normalizes
+        each image by its own statistics, validation by the running ones. Measured on
+        resnet101, one image's descriptor under the two modes had cosine similarity 0.58.
+
+    So the loss optimizes a network that validation never scores, which is how a falling
+    loss and a collapsing mAP coexist: 0.6465 untrained to 0.1545 by the fourth epoch.
 
     Freezing them uses the ImageNet statistics for normalization and leaves them alone,
     which is what the reference does (`set_batchnorm_eval`). The affine weight and bias
