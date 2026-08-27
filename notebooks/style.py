@@ -60,6 +60,14 @@ TIER_ORDER = list(TIER)
 
 WEIGHTS = {"torchvision": "#2a78d6", "caffe": "#eb6834"}
 
+PROVENANCE = {"published": "#2a78d6", "trained here": "#eb6834"}
+"""Categorical slots 1-2 for where a checkpoint came from.
+
+The same two hues `WEIGHTS` uses, for a different question -- they never share a chart,
+and slots 1-2 are the pair the validator clears most comfortably in both modes. Not an
+ordinal ramp: neither provenance is "more" than the other, and the whole point of these
+charts is to ask whether they land in the same place."""
+
 PROTOCOLS = ["easy", "medium", "hard"]
 
 RC = {

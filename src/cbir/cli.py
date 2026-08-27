@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 from typing import Annotated, Literal
 
 import tyro
@@ -209,6 +210,125 @@ def evaluate_cmd(
         print("\n(not recorded: --no-record)")
 
 
+def train_cmd(
+    backbone: Literal["vgg16", "resnet101", "resnet50"] = "vgg16",
+    weights: Literal["caffe", "torchvision"] = "caffe",
+    epochs: int = 30,
+    lr: float = 5e-7,
+    margin: float | None = None,
+    query_size: int = 2000,
+    pool_size: int = 22000,
+    image_size: int = 362,
+    seed: int = 0,
+    whiten: bool = True,
+    whiten_pairs: int = 20000,
+    patience: int | None = 5,
+    min_delta: float = 0.001,
+    resume: bool = True,
+    out: str = "data/runs",
+) -> None:
+    """Fine-tune a backbone for retrieval on retrieval-SfM-120k.
+
+    Trains GeM with a learnable exponent under a contrastive loss over SfM-mined
+    landmark pairs, re-mining hard negatives against the current model each epoch.
+    Checkpoints land in `out/<run>/`, in the same layout as the published ones, so
+    `cbir evaluate` can read them back.
+
+    This is hours of GPU, not minutes: roughly 15 minutes per epoch for vgg16 at the
+    default sizes. The corpus is a manual download — see `descriptors/cnn/sfm.py`.
+
+    Args:
+        backbone: Architecture to fine-tune.
+        weights: Which ImageNet weights to start from. The reference initializes from
+            its Caffe-converted ones and the published numbers were reached that way, so
+            that is the default; `torchvision` is the ablation. A manual download.
+        epochs: Passes over the sampled tuples.
+        lr: Adam learning rate. The published value is 5e-7 and is calibrated to a
+            summed loss; raising it without also changing the reduction diverges.
+        margin: Contrastive hinge width. Defaults to the published value for the
+            backbone — 0.85 for resnet101, 0.7 for vgg16.
+        query_size: Tuples sampled per epoch.
+        pool_size: Images descriptors are extracted for, to mine negatives from.
+        image_size: Longest side during training. Evaluation still runs at 1024.
+        seed: Seeds sampling and initialization.
+        whiten: Fit the supervised projection onto `best.pth` when training ends, which
+            is what makes the checkpoint complete — see `cbir whiten`. Turning it off
+            leaves a network that has to be evaluated against held-out PCA instead.
+        whiten_pairs: Matching pairs the projection is fitted on.
+        patience: Stop after this many epochs with no validation-mAP gain larger than
+            `min_delta`. `None` runs the full schedule, as the reference does.
+        min_delta: How much an epoch must beat the running best by to count as progress.
+            Smaller gains still update `best.pth`; they just do not reset the patience
+            counter.
+        resume: Continue from `last.pth` if the run directory already holds one. Mining
+            is seeded per epoch, so a resumed run draws the tuples a fresh one would have.
+        out: Directory for checkpoints.
+    """
+    # Deferred like `evaluate`'s runner import: `cbir results` should not pay for torch.
+    from cbir.training.loop import TrainConfig, train
+
+    config = TrainConfig(
+        backbone=backbone,
+        weights=weights,
+        epochs=epochs,
+        lr=lr,
+        margin=margin,
+        query_size=query_size,
+        pool_size=pool_size,
+        image_size=image_size,
+        seed=seed,
+        whiten=whiten,
+        whiten_pairs=whiten_pairs,
+        patience=patience,
+        min_delta=min_delta,
+        resume=resume,
+        out=Path(out),
+    )
+    best = train(config)
+    print(f"\nbest checkpoint: {best}")
+
+
+def whiten_cmd(
+    checkpoint: str,
+    backbone: Literal["vgg16", "resnet101", "resnet50"] = "vgg16",
+    pairs: int = 20000,
+    max_side: int = 1024,
+    seed: int = 0,
+) -> None:
+    """Fit supervised whitening for a trained checkpoint and write it into the file.
+
+    `cbir train` fine-tunes the network but not the projection applied to its output —
+    the reference fits that separately, on SfM matching pairs, after training. Without it
+    a trained checkpoint has to fall back on PCA over the held-out set, which measured
+    0.5747 Medium against 0.6073 for the same published network with its own projection.
+
+    Writes `meta['Lw']` in place, under the key the loader already reads, so afterwards
+    the checkpoint scores with `--whiten --whiten-source learned` exactly as a published
+    one does. Both the single- and multi-scale variants are fitted, since they are not
+    interchangeable.
+
+    This is one extraction pass per variant at evaluation resolution — tens of minutes,
+    not minutes.
+
+    Args:
+        checkpoint: The `best.pth` to fit for and write into.
+        backbone: Architecture the checkpoint holds.
+        pairs: Matching pairs to fit on. Must exceed the descriptor width, and wants to
+            exceed it comfortably; the cost is roughly two images extracted per pair.
+        max_side: Longest image side during extraction. Match what evaluation uses.
+        seed: Seeds the pair sample.
+    """
+    from cbir.training.whitening import attach, fit
+
+    path = Path(checkpoint)
+    if not path.exists():
+        raise FileNotFoundError(f"checkpoint {path} not found")
+
+    fitted = fit(checkpoint, backbone, pairs=pairs, max_side=max_side, seed=seed)
+    attach(path, fitted)
+    print(f"\nwrote Lw ({', '.join(sorted(fitted))}) into {path}")
+
+
 def track_cmd(current_only: bool = False) -> None:
     """Mirror `results/runs.jsonl` into trackio, for `trackio show --project cbir`.
 
@@ -236,6 +356,8 @@ def main() -> None:
         "evaluate": evaluate_cmd,
         "results": results_cmd,
         "track": track_cmd,
+        "train": train_cmd,
+        "whiten": whiten_cmd,
     }
     tyro.extras.subcommand_cli_from_dict(subcommands)
 

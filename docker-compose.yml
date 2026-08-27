@@ -1,0 +1,85 @@
+# Training, evaluation and the metrics dashboard, with the data left where it is.
+#
+# Nothing large is copied into the image: retrieval-SfM-120k is 77 GB and the ImageNet
+# and fine-tuned weights another 0.6 GB, so both are bind-mounted read-only from the host
+# cache. Only `data/runs`, `results` and the trackio store are writable.
+#
+# The trackio store is bind-mounted from the host rather than kept in a named volume, so
+# one dashboard covers both container training runs and evaluations run on the host. It
+# deliberately does not live in the repo — AGENTS.md rules that out, a SQLite file being
+# something git cannot diff usefully.
+
+x-cache: &cache ${CBIR_CACHE:-${HOME}/.cache/cbir}:/cache/cbir:ro
+x-trackio: &trackio ${TRACKIO_HOST_DIR:-${HOME}/.cache/huggingface/trackio}:/cache/trackio
+# Run as the host user, not root. A container writing checkpoints as root leaves
+# `data/runs` un-deletable from the host and un-writable by `cbir train` run outside the
+# container — both of which happened before this existed.
+x-user: &user "${CBIR_UID:-1000}:${CBIR_GID:-1000}"
+
+services:
+  train:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: cbir:latest
+    user: *user
+    # Resume makes this worth having: a crashed run restarts from `last.pth` rather than
+    # from epoch 0. Without resume a restart policy destroys work instead of recovering
+    # it — see `training/loop.py`.
+    restart: on-failure:3
+    command: ["train", "--backbone", "vgg16", "--weights", "caffe", "--epochs", "30"]
+    volumes:
+      - *cache
+      - *trackio
+      - ./data/runs:/app/data/runs
+      - ./results:/app/results
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    # JPEG decoding is the bottleneck, not the GPU, so the container needs real CPU.
+    shm_size: "2gb"
+    # Progress, not liveness — a wedged decode keeps the process alive forever, and that
+    # is the failure this exists to catch. `start_period` covers the cold start: the
+    # first heartbeat only lands once the baseline validation begins logging.
+    healthcheck:
+      test: ["CMD", "/app/docker/healthcheck.sh"]
+      interval: 5m
+      timeout: 10s
+      retries: 2
+      start_period: 10m
+
+  # The dashboard: training curves over epochs, alongside the terminal-state rows every
+  # evaluation writes. No GPU reservation — it reads SQLite and serves a page.
+  trackio:
+    image: cbir:latest
+    user: *user
+    restart: unless-stopped
+    entrypoint: ["trackio"]
+    # No --project: the UI can then switch between `cbir` (evaluation rows) and
+    # `cbir-train` (training curves), which are deliberately separate stores.
+    command: ["show", "--host", "0.0.0.0"]
+    ports:
+      - "${TRACKIO_PORT:-7860}:7860"
+    volumes:
+      - *trackio
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:7860')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # One-shot evaluation against roxford5k. A profile keeps it out of `up`, where it would
+  # contend with training for the same GPU.
+  evaluate:
+    extends:
+      service: train
+    restart: "no"
+    profiles: ["eval"]
+    healthcheck:
+      disable: true
+    command: ["evaluate", "gem-ft-r101"]

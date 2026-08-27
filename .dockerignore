@@ -1,0 +1,12 @@
+# The corpus, checkpoints and caches are bind-mounted or regenerated -- `data/` alone is
+# 19 GB, and sending it as build context would stall every build.
+data/
+results/
+docs/
+notebooks/
+tests/
+.venv/
+.git/
+**/__pycache__/
+*.pth
+*.npz
