@@ -8,9 +8,20 @@ bug trains fine and just produces a worse network, so the rules are pinned here.
 
 from __future__ import annotations
 
+import pytest
 import torch
 
-from cbir.training.tuples import Corpus, mine_negatives
+from cbir.training.tuples import Corpus, mine_negatives, root
+
+needs_corpus = pytest.mark.skipif(
+    not (root() / "retrieval-SfM-120k.pkl").exists(),
+    reason="retrieval-SfM-120k index not downloaded",
+)
+"""The three tests below read the real corpus index, which is a manual download.
+
+The mining rules above are pinned on hand-built fixtures and always run; these assert
+the corpus's own invariants, which cannot be checked without the corpus. Skipping keeps
+CI honest about the difference rather than making the whole file conditional."""
 
 
 def test_negatives_never_come_from_the_query_cluster():
@@ -68,6 +79,7 @@ def test_a_short_pool_yields_fewer_negatives_rather_than_repeating():
     assert mined == [[1]]
 
 
+@needs_corpus
 def test_the_corpus_splits_are_disjoint_and_the_expected_size():
     # The val split exists to measure generalization; overlap would make it meaningless.
     train, val = Corpus.load("train"), Corpus.load("val")
@@ -77,6 +89,7 @@ def test_the_corpus_splits_are_disjoint_and_the_expected_size():
     assert not set(train.cids) & set(val.cids)
 
 
+@needs_corpus
 def test_every_pair_indexes_a_real_image():
     val = Corpus.load("val")
 
@@ -86,6 +99,7 @@ def test_every_pair_indexes_a_real_image():
     assert all(q != p for q, p in zip(val.qidxs, val.pidxs, strict=True))
 
 
+@needs_corpus
 def test_a_pair_is_always_within_one_cluster():
     # The corpus's own invariant, and the basis for excluding the query's cluster when
     # mining: if positives could span clusters, that exclusion would be wrong.

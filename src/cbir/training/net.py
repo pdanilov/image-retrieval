@@ -61,9 +61,13 @@ class RetrievalNet(torch.nn.Module):
         # `last_pool=False` is the default here and `True` in PooledCNN: the reference
         # trains on `features[:-1]`, and a network fine-tuned with the trailing pool
         # would not be comparable to the checkpoints this package exists to reproduce.
-        features, finetuned = PooledCNN._build(backbone, weights, last_pool)
-        if finetuned is not None:
+        # Checked before `_build`, not after it: building would download and read the
+        # checkpoint first, so an invalid configuration answered with "go fetch 500 MB"
+        # before answering "this configuration describes nothing". It also let the guard
+        # depend on a manual download, which is not a property the guard has.
+        if weights == "sfm120k":
             raise ValueError("weights='sfm120k' is already fine-tuned; training starts from ImageNet")
+        features, _ = PooledCNN._build(backbone, weights, last_pool)
         self.backbone = backbone
         self.features = features
         self.pool = GeM(p)
