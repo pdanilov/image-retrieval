@@ -43,7 +43,27 @@ def parsed(monkeypatch):
     monkeypatch.setattr("cbir.eval.runner.run_all", lambda configs, **kwargs: seen.extend(configs) or [])
     monkeypatch.setattr("cbir.data.revisitop.download", lambda name: seen.append(("download", name)))
     monkeypatch.setattr("cbir.eval.tracking.replay", lambda records: 0)
+    # Training and whitening are hours of GPU each. Unstubbed, documenting a `cbir train`
+    # line in the README makes this suite start a real 100-epoch run and hang -- which is
+    # exactly what happened, and is why `test_every_documented_subcommand_is_stubbed`
+    # below fails on a new subcommand rather than waiting to find out.
+    monkeypatch.setattr("cbir.training.loop.train", lambda config, **kwargs: Path("stub.pth"))
+    monkeypatch.setattr("cbir.training.whitening.fit", lambda *args, **kwargs: {})
+    monkeypatch.setattr("cbir.training.whitening.attach", lambda *args, **kwargs: None)
     return seen
+
+
+STUBBED = {"download", "evaluate", "results", "track", "train", "whiten"}
+"""Subcommands whose real work the `parsed` fixture replaces.
+
+`results` does no work worth stubbing -- it reads the record store -- but it is listed so
+this set reads as "every subcommand", which is what the guard below checks."""
+
+
+def test_every_documented_subcommand_is_stubbed():
+    """A README command whose work is not stubbed does not fail here -- it *runs*."""
+    used = {command.split()[1] for command in commands()}
+    assert used <= STUBBED, f"unstubbed subcommand(s) in the README: {sorted(used - STUBBED)}"
 
 
 @pytest.mark.parametrize("command", commands(), ids=lambda c: c[:60])

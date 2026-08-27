@@ -438,3 +438,92 @@ against 0.772 RPar), so these numbers are the harder half of the usual pair rath
 representative sample of it. Input is capped at `max_side=1024` and never enlarged, except that
 scaled inputs are floored at each backbone's conv-stack minimum (63 px AlexNet, 32 px
 elsewhere), which can only trigger below full scale.
+
+## Training a network here
+
+Everything above evaluates weights someone else produced. `cbir train` fine-tunes a
+backbone on retrieval-SfM-120k with the reference's recipe, and `cbir whiten` fits the
+supervised projection that finishes it — so the question stops being "can we score their
+checkpoint" and becomes **"can we produce one"**.
+
+```
+uv run cbir train --backbone vgg16 --weights caffe --epochs 100 --lr 1e-6
+uv run cbir evaluate gem --backbone vgg16 --weights sfm120k --p learned --no-last-pool \
+    --scales 1.0 0.7071067811865476 0.5 --whiten --whiten-source learned \
+    --checkpoint data/runs/vgg16-gem-margin0.7-lr1e-06-seed0/best.pth
+```
+
+Whitening is fitted automatically as the last step of training, so the checkpoint the
+command leaves behind is already complete; `cbir whiten` exists to refit one separately.
+
+![Checkpoints trained here against the published ones, all three protocols](docs/trained_vs_published.png)
+
+| multi-scale, supervised whitening | Easy | Medium | Hard |
+|---|---:|---:|---:|
+| VGG16 published | 0.790 | 0.607 | 0.329 |
+| **VGG16 trained here** (45 epochs) | **0.793** | **0.609** | **0.332** |
+| | +0.003 | +0.002 | +0.003 |
+| ResNet101 published | 0.842 | 0.654 | 0.404 |
+| ResNet101 trained here (19 epochs) | 0.836 | 0.632 | 0.367 |
+| | −0.005 | **−0.022** | **−0.037** |
+
+**VGG16 reproduces.** All three gaps sit at or inside the 0.002 noise floor documented
+below, so the defensible claim is that the two checkpoints are indistinguishable — not
+that ours is better.
+
+**ResNet101 does not, and the shortfall is concentrated on Hard.** Two hypotheses, not
+yet separated:
+
+* **Undertrained.** Early stopping ended it at epoch 19 against VGG16's 45. The VGG16 run
+  is direct evidence this rule stops too early: its epochs 31–45 gained only +0.006
+  validation mAP — under the 0.001-per-epoch threshold that ends a run — while gaining
+  **+0.007 Medium** on the benchmark. Validation plateaus before the benchmark does.
+* **Whitening under-fitted.** The projection is a `D x D` covariance, and ResNet101's
+  D is 2048 against VGG16's 512. At 30000 pairs that is 14.6x the width where VGG16 got
+  39x, and the reference fits on the full corpus (~88x). Whitening's largest effect on
+  VGG16 was on Hard (+0.040), which is exactly where ResNet101 loses most.
+
+The second is far cheaper to test — refitting the projection touches only the projection,
+leaving the weights alone — and that run is outstanding.
+
+### What each step is worth
+
+![Supervised whitening against held-out PCA, weights held fixed](docs/trained_whitening.png)
+
+Read through held-out PCA instead of its own projection, the *same* trained VGG16 scores
+0.569 Medium against 0.609. The supervised projection is worth **+0.033 Medium and
++0.040 Hard** — roughly four times what doubling the learning rate bought — from a
+closed-form solve rather than hours of GPU. This is why a checkpoint without one is
+treated as half-finished.
+
+Learning rate mattered less, and only because it was wrong to begin with: no VGG16
+command was ever published, so 5e-7 had been borrowed from the ResNet101 one. The
+reference's own VGG16 default is 1e-6, and correcting it was worth +0.011 Medium.
+ResNet101 keeps 5e-7, which *is* published for that backbone.
+
+![Best measured row per stage against the published targets](docs/trained_ladder.png)
+
+Validation mAP per epoch for the three runs, from the trackio store the loop writes.
+Measured on the held-out SfM landmark split, **not** roxford5k — a different corpus and a
+different label definition, so it ranks checkpoints during a run and nothing more. Its
+saturation is exactly why it stops runs too early:
+
+![Validation mAP per epoch for the three training runs](docs/trained_curves.png)
+
+### Two bugs this exercise found
+
+**BatchNorm was training on a batch of one.** Images keep their aspect ratios and so
+cannot be stacked, meaning each goes through its own forward pass — and `model.train()`
+left ResNet101's 104 BatchNorm layers estimating statistics from a single image. Training
+and evaluation therefore computed different functions: one image's descriptor had cosine
+similarity **0.58** between the two modes. Validation mAP fell from 0.6465 untrained to
+0.1545 by the fourth epoch *while the training loss kept falling*. VGG16 has no BatchNorm
+and reproduced the published number with this bug present, which is why it survived.
+Freezing the statistics restores the equivalence exactly (cosine 1.000000), as the
+reference does; the affine parameters stay trainable.
+
+**Early stopping paid for itself immediately.** It caught that divergence at epoch 5
+unprompted — a failure mode it was not written for — and saved ~19 hours. On the healthy
+runs it ended VGG16 at 46 of 100 and ResNet101 at 19, keeping the best checkpoint in both
+cases: the patience counter ignores gains under `min_delta`, but `best.pth` still tracks
+every improvement, so stopping early never discards a better model.
