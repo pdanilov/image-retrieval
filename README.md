@@ -464,8 +464,8 @@ command leaves behind is already complete; `cbir whiten` exists to refit one sep
 | **VGG16 trained here** (45 epochs) | **0.793** | **0.609** | **0.332** |
 | | +0.003 | +0.002 | +0.003 |
 | ResNet101 published | 0.842 | 0.654 | 0.404 |
-| ResNet101 trained here (19 epochs) | 0.836 | 0.632 | 0.367 |
-| | −0.005 | **−0.022** | **−0.037** |
+| ResNet101 trained here (19 epochs) | 0.835 | 0.636 | 0.372 |
+| | −0.006 | **−0.018** | **−0.033** |
 
 **VGG16 reproduces.** All three gaps sit at or inside the 0.002 noise floor documented
 below, so the defensible claim is that the two checkpoints are indistinguishable — not
@@ -480,11 +480,23 @@ yet separated:
   **+0.007 Medium** on the benchmark. Validation plateaus before the benchmark does.
 * **Whitening under-fitted.** The projection is a `D x D` covariance, and ResNet101's
   D is 2048 against VGG16's 512. At 30000 pairs that is 14.6x the width where VGG16 got
-  39x, and the reference fits on the full corpus (~88x). Whitening's largest effect on
-  VGG16 was on Hard (+0.040), which is exactly where ResNet101 loses most.
+  39x. Whitening's largest effect on VGG16 was on Hard (+0.040), which is exactly where
+  ResNet101 loses most.
 
-The second is far cheaper to test — refitting the projection touches only the projection,
-leaving the weights alone — and that run is outstanding.
+**The second was tested and is real but small.** Refitting on all 180000 available pairs
+— 88x the width, matching what the reference has to work with — touches the projection
+and leaves the weights alone:
+
+| ResNet101 whitening pairs | Easy | Medium | Hard |
+|---|---:|---:|---:|
+| 30000 | 0.836 | 0.632 | 0.367 |
+| 180000 | 0.835 | **0.636** | **0.372** |
+| | −0.001 | +0.004 | +0.004 |
+
+Both gains clear the noise floor, and both are about a fifth of the deficit. **So
+undertraining carries the rest.** Early stopping ended ResNet101 at 19 epochs against
+VGG16's 45, and the rule that ended it is the one VGG16 showed to be too eager. The
+table above already reflects the refit; the retrain is outstanding.
 
 ### What each step is worth
 
