@@ -1,6 +1,7 @@
 from cbir.configs.classic import BoWConfig, ClassicConfig, FisherConfig, VLADConfig
 from cbir.configs.cnn import CNNConfig, NeuralCodesConfig
 from cbir.configs.run import DescriptorConfig, RunConfig, descriptor_params
+from cbir.configs.transformer import ViTConfig
 from cbir.configs.types import Encoded
 
 __all__ = [
@@ -13,5 +14,6 @@ __all__ = [
     "NeuralCodesConfig",
     "RunConfig",
     "VLADConfig",
+    "ViTConfig",
     "descriptor_params",
 ]

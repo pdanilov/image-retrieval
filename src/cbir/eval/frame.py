@@ -46,6 +46,18 @@ the two maps agree, so the copy cannot drift.
 FC_DIM = 4096
 """Neural Codes' fc6 width, the same for both backbones it supports."""
 
+VIT_WIDTH = {
+    "dinov2-vits14": 384,
+    "dinov2-vitb14": 768,
+    "dinov2-vitl14": 1024,
+    "dinov2-vitg14": 1536,
+}
+"""Each frozen ViT's hidden size, which is its CLS descriptor's width.
+
+Duplicated from `descriptors/transformer/vit.py` for the same reason as `CONV_CHANNELS`:
+that module imports torch, and a test asserts the two maps agree.
+"""
+
 
 def descriptor_dim(technique: str, params: dict[str, Any]) -> int | None:
     """Encoded vector length, or None for a technique whose formula isn't known here.
@@ -73,6 +85,9 @@ def descriptor_dim(technique: str, params: dict[str, Any]) -> int | None:
             if technique == "neural_codes":
                 return FC_DIM
             return CONV_CHANNELS.get(params.get("backbone", ""))
+        case "vit":
+            # No PCA in this tier yet: the width is the CLS token's, fixed by the model.
+            return VIT_WIDTH.get(params.get("model", ""))
         case _:
             return None
 
