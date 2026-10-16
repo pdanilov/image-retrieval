@@ -47,7 +47,7 @@ src/cbir/
   descriptors/
     classic/     SIFT/RootSIFT → k-means vocabulary → BoW, VLAD, (Fisher)
     cnn/         Neural Codes; GeM (⊃ SPoC, MAC), R-MAC, whitening
-    transformer/ frozen ViTs read out by CLS token (DINOv2; DINOv3, SigLIP 2 next)
+    transformer/ frozen ViTs, one image embedding each (DINOv2, DINOv3, SigLIP 2)
   training/      fine-tuning for retrieval on retrieval-SfM-120k: the trainable half of
                  each neural tier (CNN today; the transformer tier's lands here too)
   search/        exact torch matmul search (no ANN — see Search backend)
@@ -204,7 +204,8 @@ Three eras, evaluated under the same protocol:
 - **CNN era**: activations of a frozen CNN as global descriptors — Neural Codes, SPoC,
   MAC, R-MAC, GeM. See below; this tier is the bridge between the other two.
 - **Transformer era**: vision transformers as global descriptors, split like the CNN
-  tier into a **frozen** half (DINOv2, DINOv3, SigLIP 2 read out by CLS token) and a
+  tier into a **frozen** half (DINOv2, DINOv3, SigLIP 2, each read out by its own image
+  embedding) and a
   **trainable** half (IRT, then fine-tuned DINOv2), L2-normalized, cosine similarity.
   The frozen half comes first; the trainable half must beat it to earn its place. See
   below.
@@ -334,8 +335,8 @@ whether retrieval training still adds anything on top.
 | model | role | weights |
 |-------|------|---------|
 | DINOv2 ViT-S/B/L/g-14 (Oquab et al., TMLR 2024, [2304.07193](https://arxiv.org/abs/2304.07193)) | the anchor of the frozen half | Apache-2.0, ungated |
-| DINOv3 ViT-L/16 (Siméoni et al., 2025, [2508.10104](https://arxiv.org/abs/2508.10104)) | the same objective scaled up and distilled | **gated** on HF — accept the license first |
-| SigLIP 2 (image-text) | the vision-language contrast: semantic, not instance-level | Apache-2.0 |
+| DINOv3 ViT-L/16 (Siméoni et al., 2025, [2508.10104](https://arxiv.org/abs/2508.10104)) | the same objective scaled up and distilled; the tier's best, and its one reproduced published row | **gated** on HF — accept the license first |
+| SigLIP 2 (image-text) | the vision-language contrast: semantic, not instance-level. No CLS token — read out by its attention-pooling head; one checkpoint per resolution, each taking only its native size | Apache-2.0 |
 | DeiT-S†/B† (distilled, ImageNet) | the trainable half's starting point, scored before training | — |
 
 Rules that change the numbers:
@@ -391,14 +392,16 @@ datasets. So:
   fixed, cropping ViT-S's queries costs 0.137 roxford Medium (0.687 → 0.550); between
   DINO's script and our protocol ViT-L moves only 0.009. Context outside the box is what
   a weak descriptor leans on — a finding worth keeping, not noise.
-- The DINOv3-paper rows remain loose references: App. D.8 says it follows Radenović et
-  al. but does not say whether queries were cropped, and its DINOv2-g row (78.2 / 58.2)
-  is far above our cropped ViT-g (69.7 / 49.4). ViT-g was not run uncropped, so whether
-  the crop explains that gap too is open.
+- **The DINOv3 paper's own ViT-L/16 row does reproduce, cropped:** 63.1 roxford Hard
+  published, 0.637 here at the 224 protocol. That is the transformer tier's validation
+  row. Its *other* rows are looser: its DINOv2-L (55.7 Hard) sits 2.9 above ours, its
+  DINOv2-g (78.2 / 58.2) far above our cropped ViT-g (69.7 / 49.4), and its SigLIP 2-L
+  (21.4 Hard) about 7 above ours. The paper does not say how it fed models other than
+  its own, so those gaps are recorded, not attributed.
 
-GeM stays the harness validator. For the transformer tier the check that remains is
-internal consistency: the ranking across model sizes (L above g on roxford, as in the
-paper) and the cropped/uncropped split above.
+GeM stays the harness validator; DINOv3-L/16 at 224 is the transformer tier's. Beyond
+that the checks are internal: the ranking across model sizes (DINOv2 L above g on
+roxford, as in its paper) and the cropped/uncropped split above.
 
 #### Trainable half
 
