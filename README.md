@@ -539,3 +539,44 @@ unprompted — a failure mode it was not written for — and saved ~19 hours. On
 runs it ended VGG16 at 46 of 100 and ResNet101 at 19, keeping the best checkpoint in both
 cases: the patience counter ignores gains under `min_delta`, but `best.pth` still tracks
 every improvement, so stopping early never discards a better model.
+
+## Transformer-tier results
+
+Frozen DINOv2, read out by its CLS token (after the final LayerNorm), compared by cosine.
+Nothing is fitted — no PCA, no whitening — so nothing touches the held-out set. The
+preprocessing is the one protocol the DINOv3 paper documents (App. D.8): the longer side
+resized to 224, the image centred on a black 224 × 224 square. Queries are bbx-cropped,
+as for every other tier.
+
+```
+uv run cbir evaluate --dataset roxford5k vit --model dinov2-vitl14
+uv run cbir evaluate --dataset rparis6k vit --model dinov2-vits14 --resize aspect
+```
+
+| model | dim | roxford5k Medium | roxford5k Hard | rparis6k Medium | rparis6k Hard |
+|---|---:|---:|---:|---:|---:|
+| DINOv2 ViT-S/14 | 384 | 0.577 | 0.354 | 0.816 | 0.648 |
+| DINOv2 ViT-B/14 | 768 | 0.641 | 0.417 | 0.884 | 0.751 |
+| DINOv2 ViT-L/14 | 1024 | **0.729** | **0.528** | 0.918 | 0.818 |
+| DINOv2 ViT-g/14 | 1536 | 0.697 | 0.494 | **0.918** | **0.824** |
+
+The frozen ViT-L beats the CNN tier's best — the ResNet101 GeM this project fine-tuned for
+retrieval, 0.654 / 0.404 on roxford5k — by 0.075 Medium and 0.124 Hard, at half the width
+and with no retrieval training at all. ViT-g ranks below ViT-L on roxford5k, which the
+DINOv2 paper reports too.
+
+### The DINOv2 paper uses a different protocol
+
+These rows sit below the DINOv2 paper's Table 9 — far below for the small models on
+roxford5k (ViT-S 0.577 / 0.354 against a published 0.688 / 0.432) — because the paper
+evaluates differently. It does not state its protocol, but its numbers match the DINO
+group's public [`eval_image_retrieval.py`](https://github.com/facebookresearch/dino),
+which loads each query image whole and never applies its `bbx`. The benchmark's labels
+describe the crop, so this project keeps cropping, and Table 9 is not directly comparable
+to anything here.
+
+`scripts/dinov2_uncropped_queries.py` replicates that script outside the harness — it
+writes nothing to `results/` — and lands within 0.1–1.6 mAP of Table 9 for ViT-S, B and L
+on both datasets, which is what pins the difference on the protocol rather than on this
+implementation. Changing padding, interpolation or the centre-crop transform did not
+close the gap (those runs are recorded, `--resize aspect|crop`, `--interpolation`).

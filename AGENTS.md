@@ -47,11 +47,14 @@ src/cbir/
   descriptors/
     classic/     SIFT/RootSIFT → k-means vocabulary → BoW, VLAD, (Fisher)
     cnn/         Neural Codes; GeM (⊃ SPoC, MAC), R-MAC, whitening
-    foundation/  DINOv2/DINOv3, CLIP, SigLIP global descriptors
+    transformer/ frozen ViTs read out by CLS token (DINOv2; DINOv3, SigLIP 2 next)
+  training/      fine-tuning for retrieval on retrieval-SfM-120k: the trainable half of
+                 each neural tier (CNN today; the transformer tier's lands here too)
   search/        exact torch matmul search (no ANN — see Search backend)
   eval/          mAP / mP@k, the three protocols, the run pipeline, results serialization
   cli.py         entry point: download / evaluate / results
 notebooks/       analysis and figures ONLY — no pipeline logic
+scripts/         one-off diagnostics outside the harness — never write to results/
 results/         committed JSONL run outputs (append-only, one run per line)
 tests/
 data/            gitignored: cached descriptors (NOT raw dataset archives — see below)
@@ -200,9 +203,11 @@ Three eras, evaluated under the same protocol:
   VLAD. Vocabulary trained on a held-out set, *never* on the evaluation database.
 - **CNN era**: activations of a frozen CNN as global descriptors — Neural Codes, SPoC,
   MAC, R-MAC, GeM. See below; this tier is the bridge between the other two.
-- **Modern**: frozen foundation-model global descriptors (DINOv2/DINOv3, CLIP, SigLIP),
-  L2-normalized, cosine similarity. Start frozen; fine-tuning is a later step and must
-  be justified by a baseline it beats.
+- **Transformer era**: vision transformers as global descriptors, split like the CNN
+  tier into a **frozen** half (DINOv2, DINOv3, SigLIP 2 read out by CLS token) and a
+  **trainable** half (IRT, then fine-tuned DINOv2), L2-normalized, cosine similarity.
+  The frozen half comes first; the trainable half must beat it to earn its place. See
+  below.
 
 Out of scope for now (do not add unprompted): local-feature re-ranking, geometric
 verification, query expansion / diffusion. These are natural next steps but each one
@@ -308,6 +313,123 @@ These are all **frozen off-the-shelf checkpoints**, so they stay inside the curr
 scope — including siaMAC and GeM, whose weights happen to have been produced by
 fine-tuning that someone else already ran. Running that fine-tuning here is a different
 matter and needs its own justification.
+
+### Transformer-era descriptors
+
+Split the same way as the CNN tier, and for the same reason: a network trained for
+something else, read out as-is, is a different experiment from one trained here for
+retrieval. Frozen extractors live in `descriptors/transformer/`; training reuses
+`training/`.
+
+**What changed from the CNN era is the pretraining, not the readout.** DINOv2 is
+self-distilled on 142M curated images — an objective that already pulls views of the
+same content together, which is roughly what the CNN tier had to *fine-tune* ImageNet
+classifiers to do. Frozen DINOv2 ViT-L/14 is published at 75.1 / 54.0 roxford5k M / H,
+against 67.8 / 41.7 for the fine-tuned GeM ResNet101. Expect the frozen half to beat
+the whole CNN tier, trained arms included; the open question for the trainable half is
+whether retrieval training still adds anything on top.
+
+#### Frozen half
+
+| model | role | weights |
+|-------|------|---------|
+| DINOv2 ViT-S/B/L/g-14 (Oquab et al., TMLR 2024, [2304.07193](https://arxiv.org/abs/2304.07193)) | the anchor of the frozen half | Apache-2.0, ungated |
+| DINOv3 ViT-L/16 (Siméoni et al., 2025, [2508.10104](https://arxiv.org/abs/2508.10104)) | the same objective scaled up and distilled | **gated** on HF — accept the license first |
+| SigLIP 2 (image-text) | the vision-language contrast: semantic, not instance-level | Apache-2.0 |
+| DeiT-S†/B† (distilled, ImageNet) | the trainable half's starting point, scored before training | — |
+
+Rules that change the numbers:
+
+- **The readout is the CLS token after the final LayerNorm** — DINOv2's
+  `x_norm_clstoken`, Hugging Face's `pooler_output`. Every published instance-retrieval
+  row is measured on it. Mean or GeM pooling over patch tokens is an *ablation* to add
+  on top of the CLS rows, not the default. GeM on patch tokens has a trap: the tokens are
+  signed (LayerNorm output, no ReLU), and GeM's clamp to `eps` discards every negative
+  component, so `p = 1` (mean) is the honest first comparison.
+- **Protocol (DINOv3 App. D.8, the only one either paper documents):** resize so the
+  *longer* side is 224, keeping the aspect ratio; centre on a black 224 x 224 square
+  ("full center crop" of an image already 224 long can only pad); ImageNet mean/std;
+  cosine on the raw CLS token; no PCA, no whitening. The paper names no interpolation —
+  bicubic is used here because DINOv2's own evaluation transforms use it. Queries are cropped to
+  `bbx` first, as for every method. Any other resolution is a labelled ablation.
+- **Plain DINOv2, not the registers variant**, for the rows compared to published
+  numbers. Registers are an ablation afterwards.
+- `image_size` must be a multiple of the patch size (14 for DINOv2, 16 for DINOv3): the
+  patch embedding silently drops the remainder rather than raising.
+
+Published reference rows (mAP, Medium / Hard), all frozen CLS — read the note below
+before comparing to them:
+
+| model | ROxf M | ROxf H | RPar M | RPar H | source |
+|-------|--------|--------|--------|--------|--------|
+| DINOv2 ViT-S/14 | 68.8 | 43.2 | 84.6 | 68.5 | DINOv2 Table 9 |
+| DINOv2 ViT-B/14 | 72.9 | 49.5 | 90.3 | 78.6 | DINOv2 Table 9 |
+| DINOv2 ViT-L/14 | 75.1 | 54.0 | 92.7 | 83.5 | DINOv2 Table 9 |
+| DINOv2 ViT-g/14 | 73.6 | 52.3 | 92.1 | 82.6 | DINOv2 Table 9 |
+| DINOv2 ViT-g/14 | 78.2 | 58.2 | 92.7 | 84.6 | DINOv3 Table 23 |
+| DINOv2 ViT-L/14 | — | 55.7 | — | — | DINOv3 distilled-model table |
+| DINOv3 ViT-L/16 | — | 63.1 | — | — | DINOv3 distilled-model table |
+| SigLIP 2 g/16 | 49.3 | 25.1 | 79.3 | 60.9 | DINOv3 Table 23 |
+
+**DINOv2's Table 9 was measured on uncropped queries, so it is not a target for this
+harness.** Investigated on this branch, not assumed: under the protocol above, ViT-S and
+ViT-B missed the table by 8-11 mAP on roxford (ViT-L and ViT-g by 1-4). Padding,
+interpolation and DINOv2's own centre-crop transform each moved ViT-S by at most 4 points
+and never toward the table. What closed the gap was facebookresearch/dino's public
+`eval_image_retrieval.py`, which the same group wrote: it loads the query images whole,
+with no `bbx` crop at all, and `thumbnail`s everything to 224. Replicating that script
+outside the harness reproduces Table 9 within 0.1-1.6 mAP for S, B and L on both
+datasets. So:
+
+- Rows here are cropped, as the benchmark requires, and are compared to Table 9 only
+  with that difference stated. The gap is a protocol difference, not a harness bug.
+- Do not "fix" it by uncropping queries. The uncropped numbers are the ones the
+  benchmark rules out (see Evaluation protocol). The diagnostic that measured them is
+  `scripts/dinov2_uncropped_queries.py` — outside the package, unreachable from the CLI,
+  and it writes nothing to `results/runs.jsonl`.
+- The crop costs small models far more than large ones. With DINO's preprocessing held
+  fixed, cropping ViT-S's queries costs 0.137 roxford Medium (0.687 → 0.550); between
+  DINO's script and our protocol ViT-L moves only 0.009. Context outside the box is what
+  a weak descriptor leans on — a finding worth keeping, not noise.
+- The DINOv3-paper rows remain loose references: App. D.8 says it follows Radenović et
+  al. but does not say whether queries were cropped, and its DINOv2-g row (78.2 / 58.2)
+  is far above our cropped ViT-g (69.7 / 49.4). ViT-g was not run uncropped, so whether
+  the crop explains that gap too is open.
+
+GeM stays the harness validator. For the transformer tier the check that remains is
+internal consistency: the ranking across model sizes (L above g on roxford, as in the
+paper) and the cropped/uncropped split above.
+
+#### Trainable half
+
+**IRT** (El-Nouby et al., 2021, [2102.05644](https://arxiv.org/abs/2102.05644)) is the
+GeM recipe with the backbone swapped: DeiT instead of ResNet, CLS instead of GeM, the
+same retrieval-SfM-120k tuples and the same contrastive loss — the authors ran
+`cnnimageretrieval-pytorch` itself. Recipe: tuples of 1 anchor, 1 positive, 5 negatives;
+2000 pairs and a 22000-image negative pool per epoch; Adam, lr 5e-7, weight decay 1e-6;
+margin 0.85; 100 epochs; **square** inputs of 224 or 384; PCA-whitening fitted on SfM.
+IRT_R adds a differential-entropy (KoLeo) regularizer that spreads descriptors over the
+sphere.
+
+| IRT row (all trained the same way) | dims | ROxf M | ROxf H | RPar M | RPar H |
+|------------------------------------|------|--------|--------|--------|--------|
+| DeiT-B† 384², CLS, contrastive | 768 | 50.5 | 22.7 | 70.6 | 47.4 |
+| DeiT-B† 384², CLS, + entropy reg (IRT_R) | 768 | 55.1 | 28.3 | 72.7 | 49.6 |
+| ResNet101 GeM 384², same recipe | 2048 | 38.1 | 12.5 | 69.4 | 45.8 |
+
+**No IRT checkpoints were published**, so unlike the CNN tier the target is the final
+mAP alone — there are no weights or descriptors to compare against. Note also that IRT
+beats ResNet101 GeM at the *same* 384 input but not the GeM evaluated at 1024; report
+that rather than the flattering comparison.
+
+What `training/` needs to host it, generalized in place rather than duplicated: a ViT
++ CLS head beside CNN + GeM in `net.py`; square resizing in `tuples.py` (the CNN recipe
+keeps aspect ratio at 362); a ViT margin and the optional entropy term in `loss.py`; and
+`whitening.py` taking any extractor instead of `PooledCNN`.
+
+After IRT reproduces, the experiment worth running is the same recipe on DINOv2-S/B. It
+is justified only if it beats the frozen DINOv2 row — if it does not, that is the
+finding. 16 GB fits ViT-S/B training (gradients accumulate per tuple); ViT-L does not.
 
 ## Search backend
 
