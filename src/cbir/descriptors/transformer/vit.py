@@ -1,4 +1,4 @@
-"""Frozen vision transformers, described by their CLS token.
+"""Frozen vision transformers, read out as one global vector each.
 
 The transformer era's off-the-shelf baseline, and the counterpart of `cnn/pooling.py`:
 a network trained for something other than retrieval, read out as a global descriptor
@@ -9,17 +9,24 @@ tier had to *fine-tune* its ImageNet classifiers to do. Frozen DINOv2 ViT-L/14 s
 0.729 / 0.528 on roxford5k Medium / Hard here, against 0.654 / 0.404 for the GeM
 ResNet101 this project fine-tuned for the task.
 
-The descriptor is the CLS token after the final LayerNorm — DINOv2's `x_norm_clstoken`,
-which is what Hugging Face exposes as `pooler_output`. Not pooled patch tokens: the
-published instance-retrieval numbers are measured on CLS, so CLS is what has to be
-reproduced before any other readout is worth comparing to it.
+Three families, one readout each, all what Hugging Face exposes as `pooler_output`:
 
-Preprocessing follows the one protocol either paper documents (DINOv3, Siméoni et al.
-2025, `2508.10104`, App. D.8): resize so the *longer* side is `image_size`, keeping the
-aspect ratio, then "take a full center crop" to `image_size` x `image_size`. A center
-crop larger than the image pads it, so the shorter side ends up framed by black bars
-rather than cut — the reading taken here, since cropping a 224-px-long image to 224
-cannot remove anything else.
+* **DINOv2** and **DINOv3** (Siméoni et al. 2025, `2508.10104`): the CLS token after
+  the final LayerNorm — DINOv2's `x_norm_clstoken`. DINOv3 also carries register
+  tokens; they sit after CLS and are not part of the descriptor. Not pooled patch
+  tokens: the published instance-retrieval numbers are measured on CLS.
+* **SigLIP 2** (Tschannen et al. 2025, `2502.14786`): there is no CLS token. The vision
+  tower ends in an attention-pooling head, and its output is the image embedding the
+  model matches against text. It is here as the image-text contrast — trained to say
+  *what* a picture shows, not *which* building it is.
+
+Preprocessing follows the one protocol either DINO paper documents (DINOv3 App. D.8):
+resize so the *longer* side is `image_size`, keeping the aspect ratio, then "take a full
+center crop" to `image_size` x `image_size`. A center crop larger than the image pads it,
+so the shorter side ends up framed by black bars rather than cut — the reading taken
+here, since cropping a 224-px-long image to 224 cannot remove anything else. Every family
+gets the same geometry and its own normalization, so a gap between families is the
+network's, not the preprocessing's.
 
 The DINOv2 paper's own table is not reproducible under this benchmark's rules, and the
 reason was found rather than guessed: it matches, within 0.1-1.6 mAP, what the DINO
@@ -32,6 +39,7 @@ out on the way; none moved ViT-S toward the table.
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
+from dataclasses import dataclass
 from typing import Literal
 
 import numpy as np
@@ -42,33 +50,77 @@ from PIL.Image import Image as PILImage
 from cbir.descriptors.classic.normalization import safe_l2_normalize
 from cbir.descriptors.cnn.neural_codes import IMAGENET_MEAN, IMAGENET_STD
 
-Model = Literal["dinov2-vits14", "dinov2-vitb14", "dinov2-vitl14", "dinov2-vitg14"]
+Model = Literal[
+    "dinov2-vits14",
+    "dinov2-vitb14",
+    "dinov2-vitl14",
+    "dinov2-vitg14",
+    "dinov3-vits16",
+    "dinov3-vitb16",
+    "dinov3-vitl16",
+    "siglip2-vitl16-256",
+    "siglip2-vitl16-384",
+    "siglip2-vitl16-512",
+]
 
-REPOS: dict[str, str] = {
-    "dinov2-vits14": "facebook/dinov2-small",
-    "dinov2-vitb14": "facebook/dinov2-base",
-    "dinov2-vitl14": "facebook/dinov2-large",
-    "dinov2-vitg14": "facebook/dinov2-giant",
+SIGLIP_MEAN = (0.5, 0.5, 0.5)
+SIGLIP_STD = (0.5, 0.5, 0.5)
+
+
+@dataclass(frozen=True)
+class Spec:
+    """What one checkpoint needs to be loaded, fed and read out.
+
+    Args:
+        repo: Hugging Face checkpoint.
+        width: Hidden size, and therefore the descriptor's width.
+        patch: Patch size. An input side that is not a multiple of it is not an error to
+            the patch embedding — a strided convolution just drops the remainder — so the
+            last rows and columns of every image would be silently ignored. Rejected.
+        mean: Per-channel normalization mean the network was trained under.
+        std: Per-channel normalization std.
+        native: The only input size the checkpoint accepts, for fixed-resolution
+            checkpoints. SigLIP 2 ships one checkpoint per resolution, with position
+            embeddings learned for that grid; running it at another size means
+            interpolating them, which is a different network from the one released.
+        siglip: Load only the vision tower of an image-text checkpoint.
+    """
+
+    repo: str
+    width: int
+    patch: int
+    mean: tuple[float, float, float] = IMAGENET_MEAN
+    std: tuple[float, float, float] = IMAGENET_STD
+    native: int | None = None
+    siglip: bool = False
+
+
+SPECS: dict[str, Spec] = {
+    # The original DINOv2 releases, without registers: those are the networks the
+    # published rows were measured on. All Apache-2.0 and ungated.
+    "dinov2-vits14": Spec("facebook/dinov2-small", 384, 14),
+    "dinov2-vitb14": Spec("facebook/dinov2-base", 768, 14),
+    "dinov2-vitl14": Spec("facebook/dinov2-large", 1024, 14),
+    "dinov2-vitg14": Spec("facebook/dinov2-giant", 1536, 14),
+    # Distilled from the 7B teacher on LVD-1689M. **Gated**: accept the license on the
+    # model page before the first download, or loading fails with a 403. RoPE position
+    # encoding, so any multiple of 16 is a native input size.
+    "dinov3-vits16": Spec("facebook/dinov3-vits16-pretrain-lvd1689m", 384, 16),
+    "dinov3-vitb16": Spec("facebook/dinov3-vitb16-pretrain-lvd1689m", 768, 16),
+    "dinov3-vitl16": Spec("facebook/dinov3-vitl16-pretrain-lvd1689m", 1024, 16),
+    "siglip2-vitl16-256": Spec(
+        "google/siglip2-large-patch16-256", 1024, 16, SIGLIP_MEAN, SIGLIP_STD, native=256, siglip=True
+    ),
+    "siglip2-vitl16-384": Spec(
+        "google/siglip2-large-patch16-384", 1024, 16, SIGLIP_MEAN, SIGLIP_STD, native=384, siglip=True
+    ),
+    "siglip2-vitl16-512": Spec(
+        "google/siglip2-large-patch16-512", 1024, 16, SIGLIP_MEAN, SIGLIP_STD, native=512, siglip=True
+    ),
 }
-"""Hugging Face checkpoints, all Apache-2.0 and ungated. The original DINOv2 releases
-without registers: those are the networks the published rows were measured on, so a
-registers variant is an ablation to add after these reproduce, not a substitute."""
-
-WIDTH: dict[str, int] = {
-    "dinov2-vits14": 384,
-    "dinov2-vitb14": 768,
-    "dinov2-vitl14": 1024,
-    "dinov2-vitg14": 1536,
-}
-"""Hidden size of each model, and therefore the CLS descriptor's width."""
-
-PATCH = 14
-"""DINOv2's patch size. An input side that is not a multiple of it is not an error to
-the patch embedding — a stride-14 convolution just drops the remainder — so the last
-few rows and columns of every image would be silently ignored. Rejected instead."""
 
 IMAGE_SIZE = 224
-"""The published protocol's input size: 16 x 16 patches."""
+"""The published protocol's input size."""
 
 Resize = Literal["pad", "aspect", "crop"]
 """How an image becomes the network's input — a part of the protocol the DINOv2 paper
@@ -90,7 +142,7 @@ RESAMPLING = {"bicubic": Image.Resampling.BICUBIC, "bilinear": Image.Resampling.
 
 
 class FrozenViT:
-    """A frozen ViT, the preprocessing its retrieval rows assume, and its CLS readout."""
+    """A frozen ViT, the preprocessing its retrieval rows assume, and its global readout."""
 
     def __init__(
         self,
@@ -102,15 +154,23 @@ class FrozenViT:
         device: str | None = None,
         batch_size: int = 64,
     ) -> None:
-        if model not in REPOS:
-            raise ValueError(f"unknown model {model!r}, expected one of {sorted(REPOS)}")
+        if model not in SPECS:
+            raise ValueError(f"unknown model {model!r}, expected one of {sorted(SPECS)}")
+        spec = SPECS[model]
         if resize not in ("pad", "aspect", "crop"):
             raise ValueError(f"unknown resize {resize!r}, expected pad, aspect or crop")
         if interpolation not in RESAMPLING:
             raise ValueError(f"unknown interpolation {interpolation!r}, expected one of {sorted(RESAMPLING)}")
-        if image_size % PATCH:
-            raise ValueError(f"image_size must be a multiple of the patch size {PATCH}, got {image_size}")
+        if image_size % spec.patch:
+            raise ValueError(f"image_size must be a multiple of the patch size {spec.patch}, got {image_size}")
+        if spec.native is not None and (image_size != spec.native or resize == "aspect"):
+            raise ValueError(
+                f"{model} is a fixed-resolution checkpoint: it takes {spec.native} x {spec.native} only, "
+                f"so image_size must be {spec.native} and resize cannot be 'aspect'. For another "
+                "resolution, pick the checkpoint released at that size."
+            )
         self.model = model
+        self.spec = spec
         self.image_size = image_size
         self.resize = resize
         self.interpolation = interpolation
@@ -119,9 +179,14 @@ class FrozenViT:
 
         # Imported here, not at module scope: transformers is a multi-second import that
         # nothing but this class needs, and `cbir results` should not pay for it.
-        from transformers import AutoModel
+        if spec.siglip:
+            # The vision tower alone. `AutoModel` would load the text tower too, which
+            # nothing here calls, and its forward requires text inputs.
+            from transformers import SiglipVisionModel as Loader
+        else:
+            from transformers import AutoModel as Loader
 
-        self._model = AutoModel.from_pretrained(REPOS[model]).to(self.device).eval()
+        self._model = Loader.from_pretrained(spec.repo).to(self.device).eval()
 
     def preprocess(self, image: PILImage) -> torch.Tensor:
         """One image to a normalized `(3, h, w)` tensor, shaped as `self.resize` says.
@@ -145,12 +210,13 @@ class FrozenViT:
                 image = tv.center_crop(image, [side, side])
             case "aspect":
                 factor = side / max(image.size)
-                size = (_patches(image.width * factor), _patches(image.height * factor))
+                patch = self.spec.patch
+                size = (_patches(image.width * factor, patch), _patches(image.height * factor, patch))
                 image = image.resize(size, resampling)
             case "crop":
                 image = _scale(image, round(side * 256 / 224) / min(image.size), resampling)
                 image = tv.center_crop(image, [side, side])
-        return tv.normalize(tv.to_tensor(image), mean=IMAGENET_MEAN, std=IMAGENET_STD)
+        return tv.normalize(tv.to_tensor(image), mean=self.spec.mean, std=self.spec.std)
 
     def _batches(self, images: Iterable[PILImage]) -> Iterator[torch.Tensor]:
         batch: list[torch.Tensor] = []
@@ -169,13 +235,13 @@ class FrozenViT:
             yield torch.stack(batch)
 
     def extract(self, images: Iterable[PILImage]) -> np.ndarray:
-        """`(N, width)` L2-normalized CLS descriptors, in input order.
+        """`(N, width)` L2-normalized descriptors, in input order.
 
         Batched, unlike the CNN tier: the square modes give every input the same size,
         so stacking needs no padding beyond what the protocol already applies. `aspect`
-        inputs batch only while consecutive shapes agree. Float32
-        throughout — these rows are compared to published numbers, and half precision
-        is a second variable a mismatch would then have to rule out.
+        inputs batch only while consecutive shapes agree. Float32 throughout — these
+        rows are compared to published numbers, and half precision is a second variable
+        a mismatch would then have to rule out.
         """
         vectors = []
         with torch.inference_mode():
@@ -183,7 +249,7 @@ class FrozenViT:
                 output = self._model(pixel_values=batch.to(self.device))
                 vectors.append(output.pooler_output.float().cpu().numpy())
         if not vectors:
-            return np.zeros((0, WIDTH[self.model]), dtype=np.float32)
+            return np.zeros((0, self.spec.width), dtype=np.float32)
         return safe_l2_normalize(np.concatenate(vectors).astype(np.float32), axis=1)
 
 
@@ -192,6 +258,6 @@ def _scale(image: PILImage, factor: float, resampling: Image.Resampling) -> PILI
     return image.resize(size, resampling)
 
 
-def _patches(length: float) -> int:
+def _patches(length: float, patch: int) -> int:
     """`length` rounded to a whole number of patches, at least one."""
-    return max(PATCH, round(length / PATCH) * PATCH)
+    return max(patch, round(length / patch) * patch)

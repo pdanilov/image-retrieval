@@ -20,16 +20,18 @@ from cbir.descriptors.transformer.vit import IMAGE_SIZE, FrozenViT, Interpolatio
 
 @dataclass(frozen=True)
 class ViTConfig:
-    """A frozen vision transformer's CLS token, compared by cosine.
+    """A frozen vision transformer's global readout, compared by cosine.
 
-    Nothing is fitted: no PCA, no whitening. The published rows this reproduces use
-    the raw normalized CLS token, so the held-out images are never extracted.
+    The readout is the CLS token for DINOv2/DINOv3 and the attention-pooling head for
+    SigLIP 2 — each family's own image embedding. Nothing is fitted: no PCA, no
+    whitening, so the held-out images are never extracted.
 
     Args:
-        model: Which frozen checkpoint supplies the CLS token.
+        model: Which frozen checkpoint to read out. SigLIP 2 names carry their
+            resolution because each one is a separate fixed-size checkpoint.
         image_size: Input side: the square's for `pad` and `crop`, the longer side's for
             `aspect`. 224 is the published protocol; anything else is an ablation. Must
-            be a multiple of the patch size.
+            be a multiple of the patch size, and equal to the native size for SigLIP 2.
         resize: How an image is fitted to `image_size`. `pad` is the documented
             protocol; `aspect` and `crop` were ruled out as the reason the DINOv2
             paper's table does not reproduce — see `descriptors/transformer/vit.py`.

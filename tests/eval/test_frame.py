@@ -89,17 +89,18 @@ def test_the_neural_codes_width_agrees_with_the_real_one():
 
 
 def test_vit_widths_match_the_descriptor_module():
-    from cbir.descriptors.transformer.vit import WIDTH
+    from cbir.descriptors.transformer.vit import SPECS
     from cbir.eval.frame import VIT_WIDTH
 
-    assert VIT_WIDTH == WIDTH
+    assert {name: spec.width for name, spec in SPECS.items()} == VIT_WIDTH
 
 
 def test_vit_width_comes_from_the_model():
     from cbir.eval.frame import descriptor_dim
 
     assert descriptor_dim("vit", {"model": "dinov2-vitl14", "image_size": 224}) == 1024
-    assert descriptor_dim("vit", {"model": "dinov3-vitl16"}) is None
+    assert descriptor_dim("vit", {"model": "dinov3-vitl16"}) == 1024
+    assert descriptor_dim("vit", {"model": "dinov1-vits16"}) is None
 
 
 def test_cnn_widths_come_from_the_params():

@@ -4,7 +4,7 @@ import torch
 from PIL import Image
 
 from cbir.descriptors.cnn.neural_codes import IMAGENET_MEAN, IMAGENET_STD
-from cbir.descriptors.transformer.vit import IMAGE_SIZE, WIDTH, FrozenViT
+from cbir.descriptors.transformer.vit import IMAGE_SIZE, SPECS, FrozenViT
 
 SMALL = "dinov2-vits14"
 
@@ -125,13 +125,35 @@ def test_image_size_must_be_a_multiple_of_the_patch():
 
 def test_unknown_model_is_rejected():
     with pytest.raises(ValueError, match="unknown model"):
-        FrozenViT("dinov3-vitl16", device="cpu")  # type: ignore[arg-type]
+        FrozenViT("dinov1-vits16", device="cpu")  # type: ignore[arg-type]
+
+
+def test_patch_size_is_per_model():
+    # DINOv3 uses 16-px patches: 224 is fine, 518 (DINOv2's 37 x 14) is not.
+    with pytest.raises(ValueError, match="multiple of the patch size 16"):
+        FrozenViT("dinov3-vitl16", image_size=518, device="cpu")
+
+
+def test_fixed_resolution_checkpoints_take_only_their_native_size():
+    # Each SigLIP 2 checkpoint learned position embeddings for one grid; another size
+    # would interpolate them, which is not the released network.
+    with pytest.raises(ValueError, match="fixed-resolution"):
+        FrozenViT("siglip2-vitl16-256", image_size=224, device="cpu")
+    with pytest.raises(ValueError, match="fixed-resolution"):
+        FrozenViT("siglip2-vitl16-256", image_size=256, resize="aspect", device="cpu")
+
+
+def test_every_family_has_its_own_normalization():
+    # SigLIP is trained on [-1, 1] inputs, DINO on ImageNet statistics. Feeding one the
+    # other's does not fail; it shifts every activation.
+    assert SPECS["siglip2-vitl16-256"].mean == (0.5, 0.5, 0.5)
+    assert SPECS["dinov3-vitl16"].mean == SPECS["dinov2-vitl14"].mean
 
 
 def test_extract_returns_l2_normalized_descriptors_of_the_model_width(model):
     vectors = model.extract(_images(3))
 
-    assert vectors.shape == (3, WIDTH[SMALL])
+    assert vectors.shape == (3, SPECS[SMALL].width)
     assert vectors.dtype == np.float32
     assert np.linalg.norm(vectors, axis=1) == pytest.approx(1.0, abs=1e-5)
 
@@ -164,7 +186,7 @@ def test_extract_spans_batches_without_reordering(model):
 
 
 def test_extract_of_nothing_is_an_empty_array_not_an_error(model):
-    assert model.extract([]).shape == (0, WIDTH[SMALL])
+    assert model.extract([]).shape == (0, SPECS[SMALL].width)
 
 
 def test_different_images_give_different_descriptors(model):

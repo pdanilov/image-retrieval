@@ -51,8 +51,14 @@ VIT_WIDTH = {
     "dinov2-vitb14": 768,
     "dinov2-vitl14": 1024,
     "dinov2-vitg14": 1536,
+    "dinov3-vits16": 384,
+    "dinov3-vitb16": 768,
+    "dinov3-vitl16": 1024,
+    "siglip2-vitl16-256": 1024,
+    "siglip2-vitl16-384": 1024,
+    "siglip2-vitl16-512": 1024,
 }
-"""Each frozen ViT's hidden size, which is its CLS descriptor's width.
+"""Each frozen ViT's hidden size, which is its descriptor's width.
 
 Duplicated from `descriptors/transformer/vit.py` for the same reason as `CONV_CHANNELS`:
 that module imports torch, and a test asserts the two maps agree.
