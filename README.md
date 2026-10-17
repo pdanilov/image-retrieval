@@ -395,6 +395,9 @@ The fine-tuned row wins both outright: +0.270 Medium and +0.210 Hard over VLAD, 
 the width — because the network was trained for the question being asked instead of
 borrowed from a classifier.
 
+That stays true only within the CNN era: a frozen DINOv3 beats this row on both protocols
+without any retrieval training — see [Transformer-tier results](#transformer-tier-results).
+
 ### Neural Codes
 
 | backbone | dim | Medium | Hard |
@@ -539,3 +542,177 @@ unprompted — a failure mode it was not written for — and saved ~19 hours. On
 runs it ended VGG16 at 46 of 100 and ResNet101 at 19, keeping the best checkpoint in both
 cases: the patience counter ignores gains under `min_delta`, but `best.pth` still tracks
 every improvement, so stopping early never discards a better model.
+
+## Transformer-tier results
+
+Frozen vision transformers, each read out by its own image embedding: the CLS token after
+the final LayerNorm for DINOv2, DINOv3 and DeiT, the attention-pooling head for SigLIP 2
+(which has no CLS token). Compared by cosine. Unless a row says otherwise nothing is
+fitted — no PCA, no whitening — so nothing touches the held-out set; the Whitening section
+below is the exception. The preprocessing is the one protocol the DINOv3 paper
+documents (App. D.8): the longer side resized to 224, the image centred on a black square,
+each family normalized as it was trained. Queries are bbx-cropped, as for every other
+tier.
+
+```
+uv run cbir evaluate --dataset roxford5k vit --model dinov3-vitl16
+uv run cbir evaluate --dataset roxford5k vit --model dinov2-vitl14 --image-size 448
+uv run cbir evaluate --dataset rparis6k vit --model siglip2-vitl16-384 --image-size 384
+uv run cbir evaluate --dataset roxford5k vit --model siglip2-vitl16-512 --image-size 512 --whiten
+uv run cbir evaluate --dataset roxford5k vit --model dinov3-vitl16 --resize aspect --readout gem --p 3.0
+```
+
+DINOv3's weights are gated on Hugging Face: accept the license on the
+[model page](https://huggingface.co/facebook/dinov3-vitl16-pretrain-lvd1689m) first, or
+the download fails with a 403.
+
+| model | dim | roxford5k Medium | roxford5k Hard | rparis6k Medium | rparis6k Hard |
+|---|---:|---:|---:|---:|---:|
+| DINOv2 ViT-S/14 | 384 | 0.577 | 0.354 | 0.816 | 0.648 |
+| DINOv2 ViT-B/14 | 768 | 0.641 | 0.417 | 0.884 | 0.751 |
+| DINOv2 ViT-L/14 | 1024 | 0.729 | 0.528 | **0.918** | 0.818 |
+| DINOv2 ViT-g/14 | 1536 | 0.697 | 0.494 | **0.918** | **0.824** |
+| DINOv3 ViT-S/16 | 384 | 0.635 | 0.418 | 0.816 | 0.651 |
+| DINOv3 ViT-B/16 | 768 | 0.741 | 0.552 | 0.889 | 0.762 |
+| DINOv3 ViT-L/16 | 1024 | **0.810** | **0.637** | 0.910 | 0.811 |
+| SigLIP 2 ViT-L/16, 256 px | 1024 | 0.373 | 0.106 | 0.734 | 0.521 |
+| DeiT-S/16†, 224 px | 384 | 0.216 | 0.066 | 0.588 | 0.327 |
+| DeiT-B/16†, 224 px | 768 | 0.252 | 0.069 | 0.640 | 0.382 |
+| DeiT-B/16†, 384 px | 768 | 0.301 | 0.085 | 0.656 | 0.417 |
+
+DINOv3 ViT-L is the tier's best on roxford5k, 0.081 Medium and 0.109 Hard above DINOv2
+ViT-L — and even DINOv3 ViT-B beats DINOv2 ViT-L there. On rparis6k the two generations
+are level, DINOv2 slightly ahead.
+
+It is also the first transformer row that reproduces a published number under this
+benchmark's protocol: the DINOv3 paper reports 63.1 roxford5k Hard for ViT-L/16, against
+0.637 here. That paper says it follows Radenović et al.'s protocol, and the match suggests
+it cropped its queries — unlike the DINOv2 paper (below).
+
+Against the other tiers, on roxford5k Medium / Hard:
+
+| tier | best row | Medium | Hard |
+|---|---|---:|---:|
+| classic | VLAD k=4096 | 0.385 | 0.195 |
+| off-the-shelf CNN | ResNet101 R-MAC, caffe, whitened | 0.465 | 0.142 |
+| off-the-shelf CNN | ResNet101 GeM `p=3`, caffe, whitened | 0.461 | 0.186 |
+| fine-tuned CNN | ResNet101 GeM, Radenović et al.'s published checkpoint | 0.654 | 0.404 |
+| fine-tuned CNN | ResNet101 GeM, trained here (19 epochs) | 0.636 | 0.372 |
+| frozen supervised ViT | DeiT-B/16†, 384 px | 0.301 | 0.085 |
+| frozen vision-language | SigLIP 2 ViT-L/16, 512 px, whitened | 0.432 | 0.189 |
+| frozen self-supervised | DINOv3 ViT-L/16, 224 px | **0.810** | **0.637** |
+
+Each row is that tier's best post-processing: the off-the-shelf CNN and SigLIP 2 rows are
+PCA-whitened, the fine-tuned CNN rows use their supervised projection, and the DINO row is
+not whitened, because whitening costs DINO points (see below).
+
+A frozen self-supervised network beats the CNN fine-tuned for this very task — the
+published checkpoint — by 0.156 Medium and 0.233 Hard, and the one trained here by 0.174
+and 0.265. A frozen image-text network of the same size, whitened, only draws
+level with the off-the-shelf CNN and with VLAD: SigLIP 2 is trained to say *what* a
+picture shows, and this benchmark asks *which* building it is. Unwhitened it sits about 7
+points below the DINOv3 paper's SigLIP 2 ViT-L (21.4 Hard), whitened about 2.5; that
+paper does not say how it fed SigLIP, so the gap is unexplained rather than attributed.
+
+DeiT is the same ViT architecture trained as a supervised ImageNet classifier (distilled
+from a CNN teacher, hence †) — the transformer counterpart of the CNN tier's ImageNet
+ResNets, and the checkpoints the IRT recipe fine-tunes. Frozen, it is the weakest row in
+the project, below VLAD: a classifier's CLS token describes the *class*, and every image
+here is a building. It is the "before" row for retrieval fine-tuning, not a contender.
+Low enough to look like a bug, so it was checked against the DINO paper's supervised
+ViT-S/16 (33.5 / 8.9 roxford5k, 63.0 / 37.2 rparis6k, measured with uncropped queries):
+run the same way through `scripts/dinov2_uncropped_queries.py`, DeiT-S† gives 31.8 / 13.3
+and 60.8 / 34.1 — within a few points despite being the distilled checkpoint rather than
+theirs. Between that protocol and this one it moves 0.102 roxford5k Medium, against
+0.110 for DINOv2-S under the same comparison — the crop's toll on a small model again.
+
+### Resolution
+
+224 px is low for a landmark that fills part of a 1024-px photograph, so the DINO and
+SigLIP 2 models were also run larger (DeiT's two sizes are in the table above). SigLIP 2 ships one checkpoint per resolution, so its rows are three
+networks; the DINO rows are one network fed differently.
+
+| model | size | roxford5k M / H | rparis6k M / H |
+|---|---:|---|---|
+| DINOv2 ViT-S/14 | 224 / 448 / 518 | 0.577 / 0.354 · 0.601 / 0.380 · 0.601 / 0.383 | 0.816 / 0.648 · 0.831 / 0.663 · 0.828 / 0.658 |
+| DINOv2 ViT-B/14 | 224 / 448 / 518 | 0.641 / 0.417 · 0.683 / 0.490 · 0.667 / 0.450 | 0.884 / 0.751 · 0.889 / 0.759 · 0.887 / 0.757 |
+| DINOv2 ViT-L/14 | 224 / 448 / 518 | 0.729 / 0.528 · 0.715 / 0.482 · 0.714 / 0.479 | 0.918 / 0.818 · 0.919 / 0.825 · 0.919 / 0.825 |
+| DINOv2 ViT-g/14 | 224 / 448 / 518 | 0.697 / 0.494 · 0.713 / 0.532 · 0.714 / 0.536 | 0.918 / 0.824 · 0.924 / 0.838 · 0.923 / 0.836 |
+| DINOv3 ViT-L/16 | 224 / 448 / 512 | 0.810 / 0.637 · 0.798 / 0.632 · 0.803 / 0.642 | 0.910 / 0.811 · 0.911 / 0.813 · 0.913 / 0.816 |
+| SigLIP 2 ViT-L/16 | 256 / 384 / 512 | 0.373 / 0.106 · 0.402 / 0.131 · 0.396 / 0.146 | 0.734 / 0.521 · 0.746 / 0.540 · 0.751 / 0.546 |
+
+There is no single direction. Resolution helps DINOv2 ViT-S, B and g on roxford5k (B by
+0.073 Hard), *hurts* DINOv2 ViT-L (0.528 → 0.482 Hard), and leaves DINOv3 ViT-L flat
+within a point. rparis6k barely moves for anyone. 448 and 518 differ by at most 0.04, and
+518 is never clearly better. The protocol's 224 costs neither ViT-L anything — and with 70
+queries per dataset, differences of one or two points are near what this benchmark can
+resolve.
+
+### Whitening
+
+The off-the-shelf CNN rows are all PCA-whitened, so the same fit was tried on the
+transformers: on the held-out benchmark at full width, as those rows are, and on sfm30k
+for DINOv3.
+
+| model | whitened on | roxford5k M / H | gain | rparis6k M / H | gain |
+|---|---|---|---|---|---|
+| DINOv3 ViT-L/16 | held-out | 0.791 / 0.611 | −0.020 / −0.026 | 0.904 / 0.803 | −0.007 / −0.008 |
+| DINOv3 ViT-L/16 | sfm30k | 0.778 / 0.593 | −0.032 / −0.044 | 0.907 / 0.804 | −0.004 / −0.007 |
+| DINOv2 ViT-L/14 | held-out | 0.708 / 0.499 | −0.021 / −0.029 | 0.911 / 0.802 | −0.007 / −0.016 |
+| DeiT-B/16†, 384 px | held-out | 0.299 / 0.081 | −0.002 / −0.005 | 0.661 / 0.427 | +0.004 / +0.010 |
+| SigLIP 2 ViT-L/16, 512 px | held-out | 0.432 / 0.189 | +0.036 / +0.042 | 0.821 / 0.652 | +0.069 / +0.107 |
+
+Whitening **hurts** both DINO generations, and it is not a noisy covariance: fitted on
+sfm30k, five times more images, DINOv3 loses more, not less. Self-distillation already
+spreads its features; whitening then inflates directions that are weak for a reason.
+SigLIP 2 gains up to 0.107 — the CNN tier's pattern again, where whitening pays most for
+descriptors whose dimensions share structure, and an image-text embedding is dominated by
+broad semantic directions. DeiT does not move.
+
+### CLS against pooled patch tokens
+
+The patch grid is a transformer's counterpart of a conv map, so the CNN tier's pooling
+applies to it directly: `--readout mean` averages the patch tokens (SPoC over tokens),
+`--readout gem --p 3.0` takes their generalized mean. The prefix tokens — CLS, DINOv3's
+four registers, DeiT's distillation token — are excluded, and every batch checks that
+what is left is exactly the patch grid.
+
+| model | readout | `pad` roxford5k M / H | `aspect` roxford5k M / H | `aspect` rparis6k M / H |
+|---|---|---|---|---|
+| DINOv3 ViT-L/16 | CLS | **0.810 / 0.637** | 0.800 / 0.614 | 0.907 / 0.806 |
+| DINOv3 ViT-L/16 | mean | 0.345 / 0.190 | 0.443 / 0.224 | 0.797 / 0.640 |
+| DINOv3 ViT-L/16 | GeM `p=3` | 0.361 / 0.202 | 0.468 / 0.250 | 0.811 / 0.652 |
+| DINOv2 ViT-L/14 | CLS | 0.729 / 0.528 | 0.716 / 0.520 | 0.918 / 0.816 |
+| DINOv2 ViT-L/14 | mean | 0.320 / 0.150 | 0.451 / 0.205 | 0.800 / 0.641 |
+| DINOv2 ViT-L/14 | GeM `p=3` | 0.326 / 0.140 | 0.473 / 0.197 | 0.796 / 0.624 |
+
+**The padding is a trap for pooled readouts.** Under `pad`, the black bars are patches,
+and a mean averages them in: a quarter of a 4:3 photo, more than half of a narrow query
+crop. Removing them (`aspect`) is worth 0.10–0.15 roxford5k Medium to the pooled
+readouts and nothing to CLS, which attends past them. So pooled rows must be measured
+under `aspect`; the `pad` ones are recorded but understate pooling.
+
+Even so, **CLS wins by a wide margin**: 0.800 against 0.468 for DINOv3 without padding.
+DINO's patch tokens are trained for dense tasks; the image-level summary is what CLS
+learns. GeM edges out the mean despite its clamp discarding the tokens' negative half.
+
+DeiT and SigLIP 2 cannot run unpadded — their position embeddings fix a square input — so
+their pooled rows are confounded by the bars and no conclusion is drawn from them (both
+are lower than their native readouts: DeiT 0.178 mean and 0.225 GeM against 0.301 CLS,
+SigLIP 2 0.351 and 0.347 against 0.396 on roxford5k Medium).
+
+### The DINOv2 paper uses a different protocol
+
+These rows sit below the DINOv2 paper's Table 9 — far below for the small models on
+roxford5k (ViT-S 0.577 / 0.354 against a published 0.688 / 0.432) — because the paper
+evaluates differently. It does not state its protocol, but its numbers match the DINO
+group's public [`eval_image_retrieval.py`](https://github.com/facebookresearch/dino),
+which loads each query image whole and never applies its `bbx`. The benchmark's labels
+describe the crop, so this project keeps cropping, and Table 9 is not directly comparable
+to anything here.
+
+`scripts/dinov2_uncropped_queries.py` replicates that script outside the harness — it
+writes nothing to `results/` — and lands within 0.1–1.6 mAP of Table 9 for ViT-S, B and L
+on both datasets, which is what pins the difference on the protocol rather than on this
+implementation. Changing padding, interpolation or the centre-crop transform did not
+close the gap (those runs are recorded, `--resize aspect|crop`, `--interpolation`).

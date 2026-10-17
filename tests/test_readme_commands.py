@@ -41,14 +41,18 @@ def parsed(monkeypatch):
     seen: list = []
 
     monkeypatch.setattr("cbir.eval.runner.run_all", lambda configs, **kwargs: seen.extend(configs) or [])
-    monkeypatch.setattr("cbir.data.revisitop.download", lambda name: seen.append(("download", name)))
-    monkeypatch.setattr("cbir.eval.tracking.replay", lambda records: 0)
+    # `cbir.cli` imports `download` by name at module scope, so the stub has to replace
+    # *that* binding. Patching `cbir.data.revisitop.download` -- which this did until
+    # it was caught -- leaves the CLI calling the real one, and the suite quietly
+    # downloaded both benchmarks on every CI run until the Oxford server returned 500.
+    monkeypatch.setattr("cbir.cli.download", lambda name: seen.append(("download", name)))
+    monkeypatch.setattr("cbir.eval.tracking.replay", lambda records: seen.append("replay") or 0)
     # Training and whitening are hours of GPU each. Unstubbed, documenting a `cbir train`
     # line in the README makes this suite start a real 100-epoch run and hang -- which is
     # exactly what happened, and is why `test_every_documented_subcommand_is_stubbed`
     # below fails on a new subcommand rather than waiting to find out.
-    monkeypatch.setattr("cbir.training.loop.train", lambda config, **kwargs: Path("stub.pth"))
-    monkeypatch.setattr("cbir.training.whitening.fit", lambda *args, **kwargs: {})
+    monkeypatch.setattr("cbir.training.loop.train", lambda config, **kwargs: seen.append("train") or Path("stub.pth"))
+    monkeypatch.setattr("cbir.training.whitening.fit", lambda *args, **kwargs: seen.append("whiten") or {})
     monkeypatch.setattr("cbir.training.whitening.attach", lambda *args, **kwargs: None)
     return seen
 
@@ -75,3 +79,9 @@ def test_readme_command_parses(command, parsed, monkeypatch, capsys):
     except SystemExit as exit_code:  # tyro exits non-zero on a parse error
         if exit_code.code:
             pytest.fail(f"{command!r} failed to parse:\n{capsys.readouterr().err or capsys.readouterr().out}")
+
+    # Parsing is only half of it: the stub must also be what ran. A stub that misses the
+    # binding the CLI actually calls lets the real work through, and the test still
+    # passes wherever that work happens to succeed. `results` only reads the record store.
+    if command.split()[1] != "results" and "--help" not in command:
+        assert parsed, f"{command!r} parsed, but no stub was reached -- the real work ran"

@@ -12,9 +12,10 @@ from typing import Any
 
 from cbir.configs.classic import ClassicConfig
 from cbir.configs.cnn import CNNConfig
+from cbir.configs.transformer import ViTConfig
 from cbir.data.holdout import EvalDataset
 
-DescriptorConfig = ClassicConfig | CNNConfig
+DescriptorConfig = ClassicConfig | CNNConfig | ViTConfig
 """Every descriptor the harness can evaluate, across eras.
 
 Members share no base class — only a shape: `technique`, `inputs_kind`, `prepare` and

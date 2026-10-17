@@ -12,6 +12,7 @@ from cbir.configs.classic import BoWConfig, FisherConfig, VLADConfig
 from cbir.configs.cnn import NeuralCodesConfig, PooledConfig, RMACConfig
 from cbir.configs.presets import PRESETS
 from cbir.configs.run import DescriptorConfig, RunConfig
+from cbir.configs.transformer import ViTConfig
 from cbir.data.holdout import EvalDataset
 from cbir.data.revisitop import SUPPORTED, download
 from cbir.eval.metrics import Protocol
@@ -26,6 +27,7 @@ Descriptor = Annotated[
     | Annotated[NeuralCodesConfig, tyro.conf.subcommand("neural-codes")]
     | Annotated[PooledConfig, tyro.conf.subcommand("gem")]
     | Annotated[RMACConfig, tyro.conf.subcommand("rmac")]
+    | Annotated[ViTConfig, tyro.conf.subcommand("vit")]
     # Presets join the *same* union rather than getting their own command: they produce
     # these very types, so `cbir evaluate gem-ft-r101` and `cbir evaluate gem --backbone
     # resnet101 ...` differ only in how much you had to type. Built from the instances,

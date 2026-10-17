@@ -46,6 +46,27 @@ the two maps agree, so the copy cannot drift.
 FC_DIM = 4096
 """Neural Codes' fc6 width, the same for both backbones it supports."""
 
+VIT_WIDTH = {
+    "dinov2-vits14": 384,
+    "dinov2-vitb14": 768,
+    "dinov2-vitl14": 1024,
+    "dinov2-vitg14": 1536,
+    "dinov3-vits16": 384,
+    "dinov3-vitb16": 768,
+    "dinov3-vitl16": 1024,
+    "siglip2-vitl16-256": 1024,
+    "siglip2-vitl16-384": 1024,
+    "siglip2-vitl16-512": 1024,
+    "deit-vits16-dist-224": 384,
+    "deit-vitb16-dist-224": 768,
+    "deit-vitb16-dist-384": 768,
+}
+"""Each frozen ViT's hidden size, which is its descriptor's width.
+
+Duplicated from `descriptors/transformer/vit.py` for the same reason as `CONV_CHANNELS`:
+that module imports torch, and a test asserts the two maps agree.
+"""
+
 
 def descriptor_dim(technique: str, params: dict[str, Any]) -> int | None:
     """Encoded vector length, or None for a technique whose formula isn't known here.
@@ -73,6 +94,12 @@ def descriptor_dim(technique: str, params: dict[str, Any]) -> int | None:
             if technique == "neural_codes":
                 return FC_DIM
             return CONV_CHANNELS.get(params.get("backbone", ""))
+        case "vit":
+            # Like the CNN tier: an explicit PCA width wins, else the model's own width.
+            dim = params.get("dim")
+            if isinstance(dim, int):
+                return dim
+            return VIT_WIDTH.get(params.get("model", ""))
         case _:
             return None
 
