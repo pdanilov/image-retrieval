@@ -6,8 +6,8 @@ with no training here. What changed is the pretraining. DINOv2 (Oquab et al., TM
 2024, `2304.07193`) is self-distilled on 142M curated images, an objective that already
 pulls different views of the same content together — which is close to what the CNN
 tier had to *fine-tune* its ImageNet classifiers to do. Frozen DINOv2 ViT-L/14 scores
-0.729 / 0.528 on roxford5k Medium / Hard here, against 0.654 / 0.404 for the GeM
-ResNet101 this project fine-tuned for the task.
+0.729 / 0.528 on roxford5k Medium / Hard here, against 0.654 / 0.404 for Radenović et
+al.'s ResNet101 GeM checkpoint fine-tuned for the task.
 
 Four families, one readout each:
 

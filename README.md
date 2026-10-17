@@ -395,6 +395,9 @@ The fine-tuned row wins both outright: +0.270 Medium and +0.210 Hard over VLAD, 
 the width — because the network was trained for the question being asked instead of
 borrowed from a classifier.
 
+That stays true only within the CNN era: a frozen DINOv3 beats this row on both protocols
+without any retrieval training — see [Transformer-tier results](#transformer-tier-results).
+
 ### Neural Codes
 
 | backbone | dim | Medium | Hard |
@@ -543,9 +546,10 @@ every improvement, so stopping early never discards a better model.
 ## Transformer-tier results
 
 Frozen vision transformers, each read out by its own image embedding: the CLS token after
-the final LayerNorm for DINOv2 and DINOv3, the attention-pooling head for SigLIP 2 (which
-has no CLS token). Compared by cosine; nothing is fitted — no PCA, no whitening — so
-nothing touches the held-out set. The preprocessing is the one protocol the DINOv3 paper
+the final LayerNorm for DINOv2, DINOv3 and DeiT, the attention-pooling head for SigLIP 2
+(which has no CLS token). Compared by cosine. Unless a row says otherwise nothing is
+fitted — no PCA, no whitening — so nothing touches the held-out set; the Whitening section
+below is the exception. The preprocessing is the one protocol the DINOv3 paper
 documents (App. D.8): the longer side resized to 224, the image centred on a black square,
 each family normalized as it was trained. Queries are bbx-cropped, as for every other
 tier.
@@ -554,6 +558,8 @@ tier.
 uv run cbir evaluate --dataset roxford5k vit --model dinov3-vitl16
 uv run cbir evaluate --dataset roxford5k vit --model dinov2-vitl14 --image-size 448
 uv run cbir evaluate --dataset rparis6k vit --model siglip2-vitl16-384 --image-size 384
+uv run cbir evaluate --dataset roxford5k vit --model siglip2-vitl16-512 --image-size 512 --whiten
+uv run cbir evaluate --dataset roxford5k vit --model dinov3-vitl16 --resize aspect --readout gem --p 3.0
 ```
 
 DINOv3's weights are gated on Hugging Face: accept the license on the
@@ -588,17 +594,21 @@ Against the other tiers, on roxford5k Medium / Hard:
 | tier | best row | Medium | Hard |
 |---|---|---:|---:|
 | classic | VLAD k=4096 | 0.385 | 0.195 |
-| off-the-shelf CNN | ResNet101 GeM `p=3`, caffe | 0.461 | 0.186 |
-| fine-tuned CNN | ResNet101 GeM, multi-scale | 0.654 | 0.404 |
+| off-the-shelf CNN | ResNet101 R-MAC, caffe, whitened | 0.465 | 0.142 |
+| off-the-shelf CNN | ResNet101 GeM `p=3`, caffe, whitened | 0.461 | 0.186 |
+| fine-tuned CNN | ResNet101 GeM, Radenović et al.'s published checkpoint | 0.654 | 0.404 |
+| fine-tuned CNN | ResNet101 GeM, trained here (19 epochs) | 0.636 | 0.372 |
 | frozen supervised ViT | DeiT-B/16†, 384 px | 0.301 | 0.085 |
 | frozen vision-language | SigLIP 2 ViT-L/16, 512 px, whitened | 0.432 | 0.189 |
 | frozen self-supervised | DINOv3 ViT-L/16, 224 px | **0.810** | **0.637** |
 
 Each row is that tier's best post-processing: the off-the-shelf CNN and SigLIP 2 rows are
-PCA-whitened, the DINO row is not, because whitening costs DINO points (see below).
+PCA-whitened, the fine-tuned CNN rows use their supervised projection, and the DINO row is
+not whitened, because whitening costs DINO points (see below).
 
-A frozen self-supervised network beats the CNN fine-tuned for this very task by 0.156
-Medium and 0.233 Hard. A frozen image-text network of the same size, whitened, only draws
+A frozen self-supervised network beats the CNN fine-tuned for this very task — the
+published checkpoint — by 0.156 Medium and 0.233 Hard, and the one trained here by 0.174
+and 0.265. A frozen image-text network of the same size, whitened, only draws
 level with the off-the-shelf CNN and with VLAD: SigLIP 2 is trained to say *what* a
 picture shows, and this benchmark asks *which* building it is. Unwhitened it sits about 7
 points below the DINOv3 paper's SigLIP 2 ViT-L (21.4 Hard), whitened about 2.5; that
@@ -618,8 +628,8 @@ theirs. Between that protocol and this one it moves 0.102 roxford5k Medium, agai
 
 ### Resolution
 
-224 px is low for a landmark that fills part of a 1024-px photograph, so each model was
-also run larger. SigLIP 2 ships one checkpoint per resolution, so its rows are three
+224 px is low for a landmark that fills part of a 1024-px photograph, so the DINO and
+SigLIP 2 models were also run larger (DeiT's two sizes are in the table above). SigLIP 2 ships one checkpoint per resolution, so its rows are three
 networks; the DINO rows are one network fed differently.
 
 | model | size | roxford5k M / H | rparis6k M / H |
