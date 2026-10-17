@@ -103,7 +103,13 @@ def test_the_network_receives_the_configured_model_and_size(wired):
     ViTConfig(model="dinov2-vitb14", image_size=448, resize="aspect", interpolation="bilinear").train_and_encode(inputs)
 
     assert built[0].args == ("dinov2-vitb14",)
-    assert built[0].kwargs == {"image_size": 448, "resize": "aspect", "interpolation": "bilinear"}
+    assert built[0].kwargs == {
+        "image_size": 448,
+        "resize": "aspect",
+        "interpolation": "bilinear",
+        "readout": "native",
+        "p": None,
+    }
 
 
 def test_params_record_every_knob_and_nothing_else():
@@ -112,6 +118,8 @@ def test_params_record_every_knob_and_nothing_else():
         "image_size": 224,
         "resize": "pad",
         "interpolation": "bicubic",
+        "readout": "native",
+        "p": None,
         "dim": None,
         "whiten": False,
         "whiten_source": "held_out",

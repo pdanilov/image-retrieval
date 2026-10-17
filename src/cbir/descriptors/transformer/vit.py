@@ -45,7 +45,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 import torch
@@ -54,6 +54,9 @@ from PIL.Image import Image as PILImage
 
 from cbir.descriptors.classic.normalization import safe_l2_normalize
 from cbir.descriptors.cnn.neural_codes import IMAGENET_MEAN, IMAGENET_STD
+
+if TYPE_CHECKING:
+    from transformers.modeling_outputs import BaseModelOutputWithPooling
 
 Model = Literal[
     "dinov2-vits14",
@@ -93,11 +96,17 @@ class Spec:
             interpolating them, which is a different network from the one released.
         siglip: Load only the vision tower of an image-text checkpoint, and read out its
             attention-pooling head rather than a CLS token.
+        prefix: Tokens ahead of the patches in the output sequence, which a pooled
+            readout must skip: CLS (DINOv2), CLS + 4 registers (DINOv3), CLS +
+            distillation (DeiT†), none (SigLIP). Checked against the patch count on every
+            batch, since a wrong value would fold CLS or a register into the mean without
+            changing its shape.
     """
 
     repo: str
     width: int
     patch: int
+    prefix: int
     mean: tuple[float, float, float] = IMAGENET_MEAN
     std: tuple[float, float, float] = IMAGENET_STD
     native: int | None = None
@@ -107,30 +116,51 @@ class Spec:
 SPECS: dict[str, Spec] = {
     # The original DINOv2 releases, without registers: those are the networks the
     # published rows were measured on. All Apache-2.0 and ungated.
-    "dinov2-vits14": Spec("facebook/dinov2-small", 384, 14),
-    "dinov2-vitb14": Spec("facebook/dinov2-base", 768, 14),
-    "dinov2-vitl14": Spec("facebook/dinov2-large", 1024, 14),
-    "dinov2-vitg14": Spec("facebook/dinov2-giant", 1536, 14),
+    "dinov2-vits14": Spec("facebook/dinov2-small", 384, 14, prefix=1),
+    "dinov2-vitb14": Spec("facebook/dinov2-base", 768, 14, prefix=1),
+    "dinov2-vitl14": Spec("facebook/dinov2-large", 1024, 14, prefix=1),
+    "dinov2-vitg14": Spec("facebook/dinov2-giant", 1536, 14, prefix=1),
     # Distilled from the 7B teacher on LVD-1689M. **Gated**: accept the license on the
     # model page before the first download, or loading fails with a 403. RoPE position
     # encoding, so any multiple of 16 is a native input size.
-    "dinov3-vits16": Spec("facebook/dinov3-vits16-pretrain-lvd1689m", 384, 16),
-    "dinov3-vitb16": Spec("facebook/dinov3-vitb16-pretrain-lvd1689m", 768, 16),
-    "dinov3-vitl16": Spec("facebook/dinov3-vitl16-pretrain-lvd1689m", 1024, 16),
+    "dinov3-vits16": Spec("facebook/dinov3-vits16-pretrain-lvd1689m", 384, 16, prefix=5),
+    "dinov3-vitb16": Spec("facebook/dinov3-vitb16-pretrain-lvd1689m", 768, 16, prefix=5),
+    "dinov3-vitl16": Spec("facebook/dinov3-vitl16-pretrain-lvd1689m", 1024, 16, prefix=5),
     "siglip2-vitl16-256": Spec(
-        "google/siglip2-large-patch16-256", 1024, 16, SIGLIP_MEAN, SIGLIP_STD, native=256, siglip=True
+        "google/siglip2-large-patch16-256",
+        1024,
+        16,
+        prefix=0,
+        mean=SIGLIP_MEAN,
+        std=SIGLIP_STD,
+        native=256,
+        siglip=True,
     ),
     "siglip2-vitl16-384": Spec(
-        "google/siglip2-large-patch16-384", 1024, 16, SIGLIP_MEAN, SIGLIP_STD, native=384, siglip=True
+        "google/siglip2-large-patch16-384",
+        1024,
+        16,
+        prefix=0,
+        mean=SIGLIP_MEAN,
+        std=SIGLIP_STD,
+        native=384,
+        siglip=True,
     ),
     "siglip2-vitl16-512": Spec(
-        "google/siglip2-large-patch16-512", 1024, 16, SIGLIP_MEAN, SIGLIP_STD, native=512, siglip=True
+        "google/siglip2-large-patch16-512",
+        1024,
+        16,
+        prefix=0,
+        mean=SIGLIP_MEAN,
+        std=SIGLIP_STD,
+        native=512,
+        siglip=True,
     ),
     # The distilled (†) DeiT checkpoints IRT starts from. Learned absolute position
     # embeddings for one grid each, so like SigLIP 2 they take only their native size.
-    "deit-vits16-dist-224": Spec("facebook/deit-small-distilled-patch16-224", 384, 16, native=224),
-    "deit-vitb16-dist-224": Spec("facebook/deit-base-distilled-patch16-224", 768, 16, native=224),
-    "deit-vitb16-dist-384": Spec("facebook/deit-base-distilled-patch16-384", 768, 16, native=384),
+    "deit-vits16-dist-224": Spec("facebook/deit-small-distilled-patch16-224", 384, 16, prefix=2, native=224),
+    "deit-vitb16-dist-224": Spec("facebook/deit-base-distilled-patch16-224", 768, 16, prefix=2, native=224),
+    "deit-vitb16-dist-384": Spec("facebook/deit-base-distilled-patch16-384", 768, 16, prefix=2, native=384),
 }
 
 UNUSED_HEADS = ("pooler.",)
@@ -158,6 +188,21 @@ explained that gap (the query crop did; see the module docstring):
 
 Interpolation = Literal["bicubic", "bilinear"]
 
+Readout = Literal["native", "mean", "gem"]
+"""Which vector of the output sequence becomes the descriptor:
+
+* `native` — each family's own image embedding: CLS after the final LayerNorm
+  (DINOv2/DINOv3/DeiT), the attention-pooling head (SigLIP 2). Every published row.
+* `mean` — the average of the patch tokens, prefix tokens excluded. The patch grid is
+  the transformer's counterpart of a conv map, so this is SPoC over tokens.
+* `gem` — generalized mean over the patch tokens, GeM over tokens. The tokens are
+  LayerNorm outputs and *signed*, unlike a post-ReLU conv map, and GeM's clamp to a
+  small positive floor discards every negative component before the power — so `gem`
+  is not `mean` at `p = 1`, and `mean` is the honest first comparison."""
+
+EPS = 1e-6
+"""GeM's floor before the power, as in the CNN tier."""
+
 RESAMPLING = {"bicubic": Image.Resampling.BICUBIC, "bilinear": Image.Resampling.BILINEAR}
 
 
@@ -171,6 +216,8 @@ class FrozenViT:
         image_size: int = IMAGE_SIZE,
         resize: Resize = "pad",
         interpolation: Interpolation = "bicubic",
+        readout: Readout = "native",
+        p: float | None = None,
         device: str | None = None,
         batch_size: int = 64,
     ) -> None:
@@ -181,6 +228,12 @@ class FrozenViT:
             raise ValueError(f"unknown resize {resize!r}, expected pad, aspect or crop")
         if interpolation not in RESAMPLING:
             raise ValueError(f"unknown interpolation {interpolation!r}, expected one of {sorted(RESAMPLING)}")
+        if readout not in ("native", "mean", "gem"):
+            raise ValueError(f"unknown readout {readout!r}, expected native, mean or gem")
+        if (readout == "gem") != (p is not None):
+            raise ValueError(f"p is GeM's exponent: required for readout='gem' and only for it, got p={p!r}")
+        if p is not None and p <= 0:
+            raise ValueError(f"p must be positive, got {p}")
         if image_size % spec.patch:
             raise ValueError(f"image_size must be a multiple of the patch size {spec.patch}, got {image_size}")
         if spec.native is not None and (image_size != spec.native or resize == "aspect"):
@@ -194,6 +247,8 @@ class FrozenViT:
         self.image_size = image_size
         self.resize = resize
         self.interpolation = interpolation
+        self.readout = readout
+        self.p = p
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.batch_size = batch_size
 
@@ -258,6 +313,20 @@ class FrozenViT:
         if batch:
             yield torch.stack(batch)
 
+    def _read_out(self, output: BaseModelOutputWithPooling, batch: torch.Tensor) -> torch.Tensor:
+        """`(B, width)` descriptors from one batch's model output, per `self.readout`."""
+        if self.readout == "native":
+            # Not `pooler_output` across the board: for DeiT that is the untrained tanh
+            # head (see `UNUSED_HEADS`), and for DINO it equals CLS anyway.
+            return output.pooler_output if self.spec.siglip else output.last_hidden_state[:, 0]
+        height, width = batch.shape[-2:]
+        patches = (height // self.spec.patch) * (width // self.spec.patch)
+        tokens = _patch_tokens(output.last_hidden_state, self.spec.prefix, patches)
+        if self.readout == "mean":
+            return tokens.mean(dim=1)
+        assert self.p is not None  # guaranteed by __init__
+        return tokens.clamp(min=EPS).pow(self.p).mean(dim=1).pow(1.0 / self.p)
+
     def extract(self, images: Iterable[PILImage]) -> np.ndarray:
         """`(N, width)` L2-normalized descriptors, in input order.
 
@@ -271,13 +340,22 @@ class FrozenViT:
         with torch.inference_mode():
             for batch in self._batches(images):
                 output = self._model(pixel_values=batch.to(self.device))
-                # Not `pooler_output` across the board: for DeiT that is the untrained
-                # tanh head (see `UNUSED_HEADS`), and for DINO it equals this anyway.
-                readout = output.pooler_output if self.spec.siglip else output.last_hidden_state[:, 0]
-                vectors.append(readout.float().cpu().numpy())
+                vectors.append(self._read_out(output, batch).float().cpu().numpy())
         if not vectors:
             return np.zeros((0, self.spec.width), dtype=np.float32)
         return safe_l2_normalize(np.concatenate(vectors).astype(np.float32), axis=1)
+
+
+def _patch_tokens(hidden: torch.Tensor, prefix: int, patches: int) -> torch.Tensor:
+    """The patch tokens of a `(B, tokens, D)` sequence, after `prefix` leading ones.
+
+    Raises if what is left is not exactly `patches` tokens: a wrong prefix would fold CLS
+    or a register into a pooled descriptor while leaving its shape unchanged.
+    """
+    tokens = hidden[:, prefix:]
+    if tokens.shape[1] != patches:
+        raise RuntimeError(f"expected {patches} patch tokens after {prefix} prefix tokens, got {tokens.shape[1]}")
+    return tokens
 
 
 def _unexpectedly_missing(missing_keys: Iterable[str]) -> set[str]:

@@ -17,7 +17,7 @@ from cbir.data.images import iter_images
 from cbir.descriptors.cnn.compression import PCACompression
 from cbir.descriptors.cnn.prepare import EvalImages, prepare_image_inputs
 from cbir.descriptors.cnn.sfm import WhitenSource, whitening_paths
-from cbir.descriptors.transformer.vit import IMAGE_SIZE, SPECS, FrozenViT, Interpolation, Model, Resize
+from cbir.descriptors.transformer.vit import IMAGE_SIZE, SPECS, FrozenViT, Interpolation, Model, Readout, Resize
 
 
 @dataclass(frozen=True)
@@ -41,6 +41,11 @@ class ViTConfig:
             paper's table does not reproduce — see `descriptors/transformer/vit.py`.
         interpolation: Resampling filter. The papers name none; bicubic is what
             DINOv2's own evaluation transforms use.
+        readout: Which vector becomes the descriptor. `native` is the family's own
+            image embedding and what every published row uses; `mean` and `gem` pool
+            the patch tokens instead, as the CNN tier pools a conv map.
+        p: GeM's exponent, for `readout="gem"` only. The tokens are signed, so GeM's
+            clamp discards their negative half — see `Readout`.
         dim: PCA width, fitted on `whiten_source`. `None` keeps the model's native width
             — with `whiten` on that still fits a full-width PCA, since whitening is a
             rotation and rescale rather than a compression.
@@ -59,6 +64,8 @@ class ViTConfig:
     image_size: int = IMAGE_SIZE
     resize: Resize = "pad"
     interpolation: Interpolation = "bicubic"
+    readout: Readout = "native"
+    p: float | None = None
     dim: int | None = None
     whiten: bool = False
     whiten_source: WhitenSource = "held_out"
@@ -86,7 +93,14 @@ class ViTConfig:
         return whitening_paths(self.whiten_source)
 
     def train_and_encode(self, inputs: EvalImages) -> Encoded:
-        model = FrozenViT(self.model, image_size=self.image_size, resize=self.resize, interpolation=self.interpolation)
+        model = FrozenViT(
+            self.model,
+            image_size=self.image_size,
+            resize=self.resize,
+            interpolation=self.interpolation,
+            readout=self.readout,
+            p=self.p,
+        )
 
         database_vectors = model.extract(iter_images(inputs.database_paths))
         # Cropped to the ground-truth region before resizing: the labels describe the

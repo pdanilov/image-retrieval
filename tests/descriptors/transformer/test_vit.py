@@ -4,7 +4,7 @@ import torch
 from PIL import Image
 
 from cbir.descriptors.cnn.neural_codes import IMAGENET_MEAN, IMAGENET_STD
-from cbir.descriptors.transformer.vit import IMAGE_SIZE, SPECS, FrozenViT, _unexpectedly_missing
+from cbir.descriptors.transformer.vit import IMAGE_SIZE, SPECS, FrozenViT, _patch_tokens, _unexpectedly_missing
 
 SMALL = "dinov2-vits14"
 
@@ -220,3 +220,44 @@ def test_deit_is_read_out_by_cls_not_by_its_untrained_pooler():
     descriptor = vit.extract([image])
     np.testing.assert_allclose(descriptor, cls, atol=1e-5)
     assert descriptor.shape == (1, SPECS["deit-vits16-dist-224"].width)
+
+
+def _pooled_reference(vit: FrozenViT, image: Image.Image, pool) -> np.ndarray:
+    """What a pooled readout should return, computed from the raw hidden state."""
+    with torch.inference_mode():
+        hidden = vit._model(pixel_values=vit.preprocess(image).unsqueeze(0)).last_hidden_state
+    vector = pool(hidden[:, SPECS[vit.model].prefix :]).numpy()
+    return vector / np.linalg.norm(vector, axis=1, keepdims=True)
+
+
+@pytest.mark.parametrize("model", [SMALL, "deit-vits16-dist-224"])
+def test_mean_readout_averages_patch_tokens_only(model):
+    # DINOv2 has CLS ahead of its patches, DeiT† has CLS and a distillation token.
+    # Folding either into the mean would change the vector, not its shape.
+    vit = FrozenViT(model, readout="mean", device="cpu")
+    image = _images(1)[0]
+    expected = _pooled_reference(vit, image, lambda tokens: tokens.mean(dim=1))
+    np.testing.assert_allclose(vit.extract([image]), expected, atol=1e-5)
+
+
+def test_gem_readout_clamps_the_signed_tokens_before_the_power():
+    vit = FrozenViT(SMALL, readout="gem", p=3.0, device="cpu")
+    image = _images(1)[0]
+    expected = _pooled_reference(vit, image, lambda t: t.clamp(min=1e-6).pow(3.0).mean(dim=1).pow(1 / 3.0))
+    np.testing.assert_allclose(vit.extract([image]), expected, atol=1e-5)
+    # And it is genuinely not the mean: the clamp drops the negative half.
+    assert not np.allclose(expected, _pooled_reference(vit, image, lambda tokens: tokens.mean(dim=1)), atol=1e-3)
+
+
+def test_a_wrong_prefix_is_caught_by_the_patch_count():
+    hidden = torch.zeros(1, 1 + 4 + 196, 8)  # CLS + 4 registers + 14 x 14 patches
+    assert _patch_tokens(hidden, prefix=5, patches=196).shape == (1, 196, 8)
+    with pytest.raises(RuntimeError, match="expected 196 patch tokens"):
+        _patch_tokens(hidden, prefix=1, patches=196)
+
+
+def test_p_belongs_to_gem_only():
+    with pytest.raises(ValueError, match="GeM's exponent"):
+        FrozenViT(SMALL, readout="gem", device="cpu")
+    with pytest.raises(ValueError, match="GeM's exponent"):
+        FrozenViT(SMALL, readout="mean", p=3.0, device="cpu")
