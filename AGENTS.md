@@ -357,6 +357,15 @@ Rules that change the numbers:
   numbers. Registers are an ablation afterwards.
 - `image_size` must be a multiple of the patch size (14 for DINOv2, 16 for DINOv3): the
   patch embedding silently drops the remainder rather than raising.
+- **Do not whiten DINO by default.** Measured, not assumed: PCA-whitening costs DINOv3-L
+  0.020 / 0.026 roxford M / H fitted on the held-out set and 0.032 / 0.044 on sfm30k (more
+  data, bigger loss — not estimation noise). It *helps* SigLIP 2 by up to 0.107. So the
+  cross-tier table compares each tier at its own best post-processing, and says which.
+- **CLS beats pooled patch tokens by ~0.33 roxford Medium on DINO**, even unpadded.
+  Pooled readouts (`mean`, `gem`) must be measured under `resize="aspect"`: under `pad`
+  the black bars are patches and get averaged in, which alone costs them 0.10–0.15. CLS
+  is insensitive to the bars. DeiT and SigLIP 2 cannot run unpadded (fixed position
+  embeddings), so their pooled rows are confounded and not conclusions.
 
 Published reference rows (mAP, Medium / Hard), all frozen CLS — read the note below
 before comparing to them:

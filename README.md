@@ -591,15 +591,18 @@ Against the other tiers, on roxford5k Medium / Hard:
 | off-the-shelf CNN | ResNet101 GeM `p=3`, caffe | 0.461 | 0.186 |
 | fine-tuned CNN | ResNet101 GeM, multi-scale | 0.654 | 0.404 |
 | frozen supervised ViT | DeiT-B/16†, 384 px | 0.301 | 0.085 |
-| frozen vision-language | SigLIP 2 ViT-L/16, 512 px | 0.396 | 0.146 |
+| frozen vision-language | SigLIP 2 ViT-L/16, 512 px, whitened | 0.432 | 0.189 |
 | frozen self-supervised | DINOv3 ViT-L/16, 224 px | **0.810** | **0.637** |
 
+Each row is that tier's best post-processing: the off-the-shelf CNN and SigLIP 2 rows are
+PCA-whitened, the DINO row is not, because whitening costs DINO points (see below).
+
 A frozen self-supervised network beats the CNN fine-tuned for this very task by 0.156
-Medium and 0.233 Hard. A frozen image-text network of the same size does not even beat the
-off-the-shelf CNN, and loses to VLAD on Hard: SigLIP 2 is trained to say *what* a picture
-shows, and this benchmark asks *which* building it is. Its row sits about 7 points below
-the DINOv3 paper's SigLIP 2 ViT-L (21.4 Hard); that paper does not say how it fed SigLIP,
-so the gap is unexplained rather than attributed.
+Medium and 0.233 Hard. A frozen image-text network of the same size, whitened, only draws
+level with the off-the-shelf CNN and with VLAD: SigLIP 2 is trained to say *what* a
+picture shows, and this benchmark asks *which* building it is. Unwhitened it sits about 7
+points below the DINOv3 paper's SigLIP 2 ViT-L (21.4 Hard), whitened about 2.5; that
+paper does not say how it fed SigLIP, so the gap is unexplained rather than attributed.
 
 DeiT is the same ViT architecture trained as a supervised ImageNet classifier (distilled
 from a CNN teacher, hence †) — the transformer counterpart of the CNN tier's ImageNet
@@ -634,6 +637,59 @@ within a point. rparis6k barely moves for anyone. 448 and 518 differ by at most 
 518 is never clearly better. The protocol's 224 costs neither ViT-L anything — and with 70
 queries per dataset, differences of one or two points are near what this benchmark can
 resolve.
+
+### Whitening
+
+The off-the-shelf CNN rows are all PCA-whitened, so the same fit was tried on the
+transformers: on the held-out benchmark at full width, as those rows are, and on sfm30k
+for DINOv3.
+
+| model | whitened on | roxford5k M / H | gain | rparis6k M / H | gain |
+|---|---|---|---|---|---|
+| DINOv3 ViT-L/16 | held-out | 0.791 / 0.611 | −0.020 / −0.026 | 0.904 / 0.803 | −0.007 / −0.008 |
+| DINOv3 ViT-L/16 | sfm30k | 0.778 / 0.593 | −0.032 / −0.044 | 0.907 / 0.804 | −0.004 / −0.007 |
+| DINOv2 ViT-L/14 | held-out | 0.708 / 0.499 | −0.021 / −0.029 | 0.911 / 0.802 | −0.007 / −0.016 |
+| DeiT-B/16†, 384 px | held-out | 0.299 / 0.081 | −0.002 / −0.005 | 0.661 / 0.427 | +0.004 / +0.010 |
+| SigLIP 2 ViT-L/16, 512 px | held-out | 0.432 / 0.189 | +0.036 / +0.042 | 0.821 / 0.652 | +0.069 / +0.107 |
+
+Whitening **hurts** both DINO generations, and it is not a noisy covariance: fitted on
+sfm30k, five times more images, DINOv3 loses more, not less. Self-distillation already
+spreads its features; whitening then inflates directions that are weak for a reason.
+SigLIP 2 gains up to 0.107 — the CNN tier's pattern again, where whitening pays most for
+descriptors whose dimensions share structure, and an image-text embedding is dominated by
+broad semantic directions. DeiT does not move.
+
+### CLS against pooled patch tokens
+
+The patch grid is a transformer's counterpart of a conv map, so the CNN tier's pooling
+applies to it directly: `--readout mean` averages the patch tokens (SPoC over tokens),
+`--readout gem --p 3.0` takes their generalized mean. The prefix tokens — CLS, DINOv3's
+four registers, DeiT's distillation token — are excluded, and every batch checks that
+what is left is exactly the patch grid.
+
+| model | readout | `pad` roxford5k M / H | `aspect` roxford5k M / H | `aspect` rparis6k M / H |
+|---|---|---|---|---|
+| DINOv3 ViT-L/16 | CLS | **0.810 / 0.637** | 0.800 / 0.614 | 0.907 / 0.806 |
+| DINOv3 ViT-L/16 | mean | 0.345 / 0.190 | 0.443 / 0.224 | 0.797 / 0.640 |
+| DINOv3 ViT-L/16 | GeM `p=3` | 0.361 / 0.202 | 0.468 / 0.250 | 0.811 / 0.652 |
+| DINOv2 ViT-L/14 | CLS | 0.729 / 0.528 | 0.716 / 0.520 | 0.918 / 0.816 |
+| DINOv2 ViT-L/14 | mean | 0.320 / 0.150 | 0.451 / 0.205 | 0.800 / 0.641 |
+| DINOv2 ViT-L/14 | GeM `p=3` | 0.326 / 0.140 | 0.473 / 0.197 | 0.796 / 0.624 |
+
+**The padding is a trap for pooled readouts.** Under `pad`, the black bars are patches,
+and a mean averages them in: a quarter of a 4:3 photo, more than half of a narrow query
+crop. Removing them (`aspect`) is worth 0.10–0.15 roxford5k Medium to the pooled
+readouts and nothing to CLS, which attends past them. So pooled rows must be measured
+under `aspect`; the `pad` ones are recorded but understate pooling.
+
+Even so, **CLS wins by a wide margin**: 0.800 against 0.468 for DINOv3 without padding.
+DINO's patch tokens are trained for dense tasks; the image-level summary is what CLS
+learns. GeM edges out the mean despite its clamp discarding the tokens' negative half.
+
+DeiT and SigLIP 2 cannot run unpadded — their position embeddings fix a square input — so
+their pooled rows are confounded by the bars and no conclusion is drawn from them (both
+are lower than their native readouts: DeiT 0.178 mean and 0.225 GeM against 0.301 CLS,
+SigLIP 2 0.351 and 0.347 against 0.396 on roxford5k Medium).
 
 ### The DINOv2 paper uses a different protocol
 
