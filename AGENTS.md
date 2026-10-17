@@ -337,7 +337,7 @@ whether retrieval training still adds anything on top.
 | DINOv2 ViT-S/B/L/g-14 (Oquab et al., TMLR 2024, [2304.07193](https://arxiv.org/abs/2304.07193)) | the anchor of the frozen half | Apache-2.0, ungated |
 | DINOv3 ViT-L/16 (Siméoni et al., 2025, [2508.10104](https://arxiv.org/abs/2508.10104)) | the same objective scaled up and distilled; the tier's best, and its one reproduced published row | **gated** on HF — accept the license first |
 | SigLIP 2 (image-text) | the vision-language contrast: semantic, not instance-level. No CLS token — read out by its attention-pooling head; one checkpoint per resolution, each taking only its native size | Apache-2.0 |
-| DeiT-S†/B† (distilled, ImageNet) | the trainable half's starting point, scored before training | — |
+| DeiT-S†/B† (distilled, ImageNet) | the trainable half's starting point, scored before training. Frozen it is the project's weakest row (0.301 / 0.085 roxford, B† 384) — the baseline IRT has to lift, not a contender. Read CLS from `last_hidden_state`: its `pooler_output` is an untrained head | Apache-2.0 |
 
 Rules that change the numbers:
 

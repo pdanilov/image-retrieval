@@ -570,6 +570,9 @@ the download fails with a 403.
 | DINOv3 ViT-B/16 | 768 | 0.741 | 0.552 | 0.889 | 0.762 |
 | DINOv3 ViT-L/16 | 1024 | **0.810** | **0.637** | 0.910 | 0.811 |
 | SigLIP 2 ViT-L/16, 256 px | 1024 | 0.373 | 0.106 | 0.734 | 0.521 |
+| DeiT-S/16†, 224 px | 384 | 0.216 | 0.066 | 0.588 | 0.327 |
+| DeiT-B/16†, 224 px | 768 | 0.252 | 0.069 | 0.640 | 0.382 |
+| DeiT-B/16†, 384 px | 768 | 0.301 | 0.085 | 0.656 | 0.417 |
 
 DINOv3 ViT-L is the tier's best on roxford5k, 0.081 Medium and 0.109 Hard above DINOv2
 ViT-L — and even DINOv3 ViT-B beats DINOv2 ViT-L there. On rparis6k the two generations
@@ -587,6 +590,7 @@ Against the other tiers, on roxford5k Medium / Hard:
 | classic | VLAD k=4096 | 0.385 | 0.195 |
 | off-the-shelf CNN | ResNet101 GeM `p=3`, caffe | 0.461 | 0.186 |
 | fine-tuned CNN | ResNet101 GeM, multi-scale | 0.654 | 0.404 |
+| frozen supervised ViT | DeiT-B/16†, 384 px | 0.301 | 0.085 |
 | frozen vision-language | SigLIP 2 ViT-L/16, 512 px | 0.396 | 0.146 |
 | frozen self-supervised | DINOv3 ViT-L/16, 224 px | **0.810** | **0.637** |
 
@@ -596,6 +600,18 @@ off-the-shelf CNN, and loses to VLAD on Hard: SigLIP 2 is trained to say *what* 
 shows, and this benchmark asks *which* building it is. Its row sits about 7 points below
 the DINOv3 paper's SigLIP 2 ViT-L (21.4 Hard); that paper does not say how it fed SigLIP,
 so the gap is unexplained rather than attributed.
+
+DeiT is the same ViT architecture trained as a supervised ImageNet classifier (distilled
+from a CNN teacher, hence †) — the transformer counterpart of the CNN tier's ImageNet
+ResNets, and the checkpoints the IRT recipe fine-tunes. Frozen, it is the weakest row in
+the project, below VLAD: a classifier's CLS token describes the *class*, and every image
+here is a building. It is the "before" row for retrieval fine-tuning, not a contender.
+Low enough to look like a bug, so it was checked against the DINO paper's supervised
+ViT-S/16 (33.5 / 8.9 roxford5k, 63.0 / 37.2 rparis6k, measured with uncropped queries):
+run the same way through `scripts/dinov2_uncropped_queries.py`, DeiT-S† gives 31.8 / 13.3
+and 60.8 / 34.1 — within a few points despite being the distilled checkpoint rather than
+theirs. Between that protocol and this one it moves 0.102 roxford5k Medium, against
+0.110 for DINOv2-S under the same comparison — the crop's toll on a small model again.
 
 ### Resolution
 

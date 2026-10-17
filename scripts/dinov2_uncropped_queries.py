@@ -39,8 +39,7 @@ from transformers import AutoModel
 from cbir.data.crop import crop_query
 from cbir.data.images import image_paths, iter_images
 from cbir.data.revisitop import download
-from cbir.descriptors.cnn.neural_codes import IMAGENET_MEAN, IMAGENET_STD
-from cbir.descriptors.transformer.vit import REPOS
+from cbir.descriptors.transformer.vit import SPECS, Spec
 from cbir.eval.metrics import evaluate
 from cbir.eval.runner import ground_truth
 from cbir.search.exact import exact_search
@@ -49,7 +48,7 @@ SIDE = 224
 """The DINO script's default `--imsize`, and what Table 9 matches."""
 
 
-def describe(net: torch.nn.Module, images: Iterable[PILImage], device: str) -> np.ndarray:
+def describe(net: torch.nn.Module, spec: Spec, images: Iterable[PILImage], device: str) -> np.ndarray:
     """L2-normalized CLS tokens, one image per pass, preprocessed as the DINO script does."""
     vectors = []
     with torch.inference_mode():
@@ -57,28 +56,38 @@ def describe(net: torch.nn.Module, images: Iterable[PILImage], device: str) -> n
             image = image.convert("RGB")
             # In place, as in the DINO script; LANCZOS is what its `Image.ANTIALIAS` was.
             image.thumbnail((SIDE, SIDE), Image.Resampling.LANCZOS)
-            tensor = tv.normalize(tv.to_tensor(image), mean=IMAGENET_MEAN, std=IMAGENET_STD)
-            vectors.append(net(pixel_values=tensor.unsqueeze(0).to(device)).pooler_output.float().cpu().numpy())
+            tensor = tv.normalize(tv.to_tensor(image), mean=spec.mean, std=spec.std)
+            # CLS from the hidden state, as the harness reads it: for DeiT `pooler_output`
+            # is an untrained head.
+            # DeiT's position embeddings are learned for one square grid; the DINO script's
+            # own ViT interpolates them for a thumbnail's shape, so this does too. DINO
+            # models always interpolate and take no such flag.
+            extra = {"interpolate_pos_encoding": True} if spec.native is not None else {}
+            output = net(pixel_values=tensor.unsqueeze(0).to(device), **extra)
+            vectors.append(output.last_hidden_state[:, 0].float().cpu().numpy())
     stacked = np.concatenate(vectors)
     return stacked / np.linalg.norm(stacked, axis=1, keepdims=True)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("model", choices=sorted(REPOS))
+    # CLS-token models only: SigLIP has no CLS token, and its fixed-size checkpoints
+    # cannot take a `thumbnail`'s variable shapes anyway.
+    parser.add_argument("model", choices=sorted(name for name, spec in SPECS.items() if not spec.siglip))
     parser.add_argument("dataset", choices=["roxford5k", "rparis6k"])
     parser.add_argument("--queries", choices=["full", "crop"], default="full")
     args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    net = AutoModel.from_pretrained(REPOS[args.model]).to(device).eval()
+    spec = SPECS[args.model]
+    net = AutoModel.from_pretrained(spec.repo).to(device).eval()
 
     query_dataset, database_dataset = download(args.dataset)
-    database = describe(net, iter_images(image_paths(database_dataset)), device)
+    database = describe(net, spec, iter_images(image_paths(database_dataset)), device)
     queries = iter_images(image_paths(query_dataset))
     if args.queries == "crop":
         queries = (crop_query(image, box) for image, box in zip(queries, query_dataset["bbx"], strict=True))
-    query_vectors = describe(net, queries, device)
+    query_vectors = describe(net, spec, queries, device)
 
     rankings = exact_search(query_vectors, database)
     truth = ground_truth(query_dataset)
