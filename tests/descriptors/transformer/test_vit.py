@@ -1,3 +1,5 @@
+import functools
+
 import numpy as np
 import pytest
 import torch
@@ -7,6 +9,25 @@ from cbir.descriptors.cnn.neural_codes import IMAGENET_MEAN, IMAGENET_STD
 from cbir.descriptors.transformer.vit import IMAGE_SIZE, SPECS, FrozenViT, _patch_tokens, _unexpectedly_missing
 
 SMALL = "dinov2-vits14"
+DINOV3 = "dinov3-vits16"
+
+
+@functools.cache
+def _accessible(model: str) -> bool:
+    """Can this machine download `model`? DINOv3 is gated: it needs an HF token for an
+    account that accepted the license -- in CI, the `HF_TOKEN` secret."""
+    from huggingface_hub import hf_hub_download
+
+    try:
+        hf_hub_download(SPECS[model].repo, "config.json")
+    except Exception:  # gated, unauthenticated, or offline: all mean "cannot test here"
+        return False
+    return True
+
+
+needs_dinov3 = pytest.mark.skipif(
+    not _accessible(DINOV3), reason="DINOv3 is gated; set HF_TOKEN for an account that accepted its license"
+)
 
 
 def _images(count: int, size: tuple[int, int] = (64, 48)) -> list[Image.Image]:
@@ -261,3 +282,22 @@ def test_p_belongs_to_gem_only():
         FrozenViT(SMALL, readout="gem", device="cpu")
     with pytest.raises(ValueError, match="GeM's exponent"):
         FrozenViT(SMALL, readout="mean", p=3.0, device="cpu")
+
+
+@needs_dinov3
+def test_dinov3_skips_its_four_registers_and_reads_out_cls():
+    # Pins the two DINOv3 facts the rest of the tier relies on but no ungated model can
+    # show: CLS is token 0 with the four registers after it, so a pooled readout starts
+    # at token 5 -- and loading leaves nothing but an unused head uninitialized.
+    vit = FrozenViT(DINOV3, device="cpu", batch_size=2)
+    image = _images(1)[0]
+    with torch.inference_mode():
+        hidden = vit._model(pixel_values=vit.preprocess(image).unsqueeze(0)).last_hidden_state
+    assert hidden.shape[1] == 1 + 4 + (IMAGE_SIZE // 16) ** 2
+
+    cls = hidden[:, 0].numpy()
+    np.testing.assert_allclose(vit.extract([image]), cls / np.linalg.norm(cls, axis=1, keepdims=True), atol=1e-5)
+
+    pooled = FrozenViT(DINOV3, readout="mean", device="cpu")
+    expected = _pooled_reference(pooled, image, lambda tokens: tokens.mean(dim=1))
+    np.testing.assert_allclose(pooled.extract([image]), expected, atol=1e-5)
