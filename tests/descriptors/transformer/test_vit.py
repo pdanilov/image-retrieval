@@ -4,7 +4,7 @@ import torch
 from PIL import Image
 
 from cbir.descriptors.cnn.neural_codes import IMAGENET_MEAN, IMAGENET_STD
-from cbir.descriptors.transformer.vit import IMAGE_SIZE, SPECS, FrozenViT
+from cbir.descriptors.transformer.vit import IMAGE_SIZE, SPECS, FrozenViT, _unexpectedly_missing
 
 SMALL = "dinov2-vits14"
 
@@ -193,3 +193,30 @@ def test_different_images_give_different_descriptors(model):
     vectors = model.extract([Image.new("RGB", (64, 64), c) for c in ("black", "white", "red")])
     off_diagonal = (vectors @ vectors.T)[~np.eye(3, dtype=bool)]
     assert off_diagonal.max() < 0.99
+
+
+def test_only_unused_heads_may_be_missing_at_load():
+    # DeiT's classification checkpoints never trained the generic `pooler` head that
+    # Hugging Face builds, so it loads random -- harmless, since nothing reads it. A
+    # missing encoder weight is not harmless: part of the network would be random and
+    # still return unit vectors.
+    assert _unexpectedly_missing({"pooler.dense.weight", "pooler.dense.bias"}) == set()
+    assert _unexpectedly_missing({"pooler.dense.weight", "encoder.layer.0.attention.query.weight"}) == {
+        "encoder.layer.0.attention.query.weight"
+    }
+
+
+def test_deit_is_read_out_by_cls_not_by_its_untrained_pooler():
+    # The trap this pins: `pooler_output` for a DeiT checkpoint is tanh(dense(CLS)) with
+    # random dense weights. Reading it would give plausible unit vectors and a
+    # meaningless mAP.
+    vit = FrozenViT("deit-vits16-dist-224", image_size=224, device="cpu", batch_size=2)
+    image = _images(1)[0]
+    with torch.inference_mode():
+        output = vit._model(pixel_values=vit.preprocess(image).unsqueeze(0))
+    cls = output.last_hidden_state[:, 0].numpy()
+    cls /= np.linalg.norm(cls, axis=1, keepdims=True)
+
+    descriptor = vit.extract([image])
+    np.testing.assert_allclose(descriptor, cls, atol=1e-5)
+    assert descriptor.shape == (1, SPECS["deit-vits16-dist-224"].width)

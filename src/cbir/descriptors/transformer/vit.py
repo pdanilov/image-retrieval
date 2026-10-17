@@ -9,12 +9,17 @@ tier had to *fine-tune* its ImageNet classifiers to do. Frozen DINOv2 ViT-L/14 s
 0.729 / 0.528 on roxford5k Medium / Hard here, against 0.654 / 0.404 for the GeM
 ResNet101 this project fine-tuned for the task.
 
-Three families, one readout each, all what Hugging Face exposes as `pooler_output`:
+Four families, one readout each:
 
 * **DINOv2** and **DINOv3** (Siméoni et al. 2025, `2508.10104`): the CLS token after
   the final LayerNorm — DINOv2's `x_norm_clstoken`. DINOv3 also carries register
   tokens; they sit after CLS and are not part of the descriptor. Not pooled patch
   tokens: the published instance-retrieval numbers are measured on CLS.
+* **DeiT** (Touvron et al. 2021, `2012.12877`): the same ViT architecture trained as a
+  supervised ImageNet classifier, distilled from a CNN teacher through a second token.
+  The descriptor is CLS, as in IRT, which fine-tunes exactly these checkpoints; the
+  distillation token beside it is not used. DeiT is the transformer counterpart of the
+  CNN tier's ImageNet ResNets: the "before" row for retrieval fine-tuning.
 * **SigLIP 2** (Tschannen et al. 2025, `2502.14786`): there is no CLS token. The vision
   tower ends in an attention-pooling head, and its output is the image embedding the
   model matches against text. It is here as the image-text contrast — trained to say
@@ -61,6 +66,9 @@ Model = Literal[
     "siglip2-vitl16-256",
     "siglip2-vitl16-384",
     "siglip2-vitl16-512",
+    "deit-vits16-dist-224",
+    "deit-vitb16-dist-224",
+    "deit-vitb16-dist-384",
 ]
 
 SIGLIP_MEAN = (0.5, 0.5, 0.5)
@@ -83,7 +91,8 @@ class Spec:
             checkpoints. SigLIP 2 ships one checkpoint per resolution, with position
             embeddings learned for that grid; running it at another size means
             interpolating them, which is a different network from the one released.
-        siglip: Load only the vision tower of an image-text checkpoint.
+        siglip: Load only the vision tower of an image-text checkpoint, and read out its
+            attention-pooling head rather than a CLS token.
     """
 
     repo: str
@@ -117,7 +126,18 @@ SPECS: dict[str, Spec] = {
     "siglip2-vitl16-512": Spec(
         "google/siglip2-large-patch16-512", 1024, 16, SIGLIP_MEAN, SIGLIP_STD, native=512, siglip=True
     ),
+    # The distilled (†) DeiT checkpoints IRT starts from. Learned absolute position
+    # embeddings for one grid each, so like SigLIP 2 they take only their native size.
+    "deit-vits16-dist-224": Spec("facebook/deit-small-distilled-patch16-224", 384, 16, native=224),
+    "deit-vitb16-dist-224": Spec("facebook/deit-base-distilled-patch16-224", 768, 16, native=224),
+    "deit-vitb16-dist-384": Spec("facebook/deit-base-distilled-patch16-384", 768, 16, native=384),
 }
+
+UNUSED_HEADS = ("pooler.",)
+"""Weights a checkpoint may legitimately lack. Hugging Face's ViT-style models build a
+`pooler` (a dense layer and tanh over CLS) that classification checkpoints such as DeiT's
+never trained; it is created randomly at load, and nothing here reads it. Any *other*
+missing weight means part of the network is random, so loading fails."""
 
 IMAGE_SIZE = 224
 """The published protocol's input size."""
@@ -186,7 +206,11 @@ class FrozenViT:
         else:
             from transformers import AutoModel as Loader
 
-        self._model = Loader.from_pretrained(spec.repo).to(self.device).eval()
+        network, info = Loader.from_pretrained(spec.repo, output_loading_info=True)
+        missing = _unexpectedly_missing(info["missing_keys"])
+        if missing:
+            raise RuntimeError(f"{spec.repo} left {len(missing)} weights uninitialized, e.g. {sorted(missing)[:3]}")
+        self._model = network.to(self.device).eval()
 
     def preprocess(self, image: PILImage) -> torch.Tensor:
         """One image to a normalized `(3, h, w)` tensor, shaped as `self.resize` says.
@@ -247,10 +271,18 @@ class FrozenViT:
         with torch.inference_mode():
             for batch in self._batches(images):
                 output = self._model(pixel_values=batch.to(self.device))
-                vectors.append(output.pooler_output.float().cpu().numpy())
+                # Not `pooler_output` across the board: for DeiT that is the untrained
+                # tanh head (see `UNUSED_HEADS`), and for DINO it equals this anyway.
+                readout = output.pooler_output if self.spec.siglip else output.last_hidden_state[:, 0]
+                vectors.append(readout.float().cpu().numpy())
         if not vectors:
             return np.zeros((0, self.spec.width), dtype=np.float32)
         return safe_l2_normalize(np.concatenate(vectors).astype(np.float32), axis=1)
+
+
+def _unexpectedly_missing(missing_keys: Iterable[str]) -> set[str]:
+    """Missing checkpoint weights other than the heads nothing reads."""
+    return {key for key in missing_keys if not key.startswith(UNUSED_HEADS)}
 
 
 def _scale(image: PILImage, factor: float, resampling: Image.Resampling) -> PILImage:

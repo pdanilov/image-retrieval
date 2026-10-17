@@ -57,6 +57,9 @@ VIT_WIDTH = {
     "siglip2-vitl16-256": 1024,
     "siglip2-vitl16-384": 1024,
     "siglip2-vitl16-512": 1024,
+    "deit-vits16-dist-224": 384,
+    "deit-vitb16-dist-224": 768,
+    "deit-vitb16-dist-384": 768,
 }
 """Each frozen ViT's hidden size, which is its descriptor's width.
 
