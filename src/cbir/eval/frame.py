@@ -95,7 +95,10 @@ def descriptor_dim(technique: str, params: dict[str, Any]) -> int | None:
                 return FC_DIM
             return CONV_CHANNELS.get(params.get("backbone", ""))
         case "vit":
-            # No PCA in this tier yet: the width is the CLS token's, fixed by the model.
+            # Like the CNN tier: an explicit PCA width wins, else the model's own width.
+            dim = params.get("dim")
+            if isinstance(dim, int):
+                return dim
             return VIT_WIDTH.get(params.get("model", ""))
         case _:
             return None

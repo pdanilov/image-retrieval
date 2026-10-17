@@ -5,6 +5,7 @@ import cbir.configs.transformer as transformer_config
 from cbir.configs.run import descriptor_params
 from cbir.configs.transformer import ViTConfig
 from cbir.descriptors.cnn.prepare import EvalImages
+from cbir.descriptors.transformer.vit import SPECS
 
 WIDTH = 16
 
@@ -46,6 +47,36 @@ def wired(monkeypatch):
     return built, inputs
 
 
+def test_whitening_is_fitted_on_the_held_out_images_only(wired, monkeypatch):
+    built, inputs = wired
+    fitted_on: list = []
+
+    class _FakePCA:
+        @staticmethod
+        def fit(descriptors, *, dim, whiten, shrinkage, seed):
+            fitted_on.append((len(descriptors), dim, whiten, shrinkage, seed))
+            return _FakePCA()
+
+        def transform(self, vectors):
+            return vectors[:, :4]
+
+    monkeypatch.setattr(transformer_config, "PCACompression", _FakePCA)
+
+    database, queries = ViTConfig(whiten=True, shrinkage=0.1).train_and_encode(inputs)
+
+    # database, queries, then the 20 held-out images -- never the database as fitting set
+    assert [len(call) for call in built[0].calls] == [6, 2, 20]
+    assert built[0].calls[2] == inputs.held_out_paths
+    # Full width when whitening without an explicit dim: a rotation, not a compression.
+    assert fitted_on == [(20, SPECS["dinov2-vitl14"].width, True, 0.1, 0)]
+    assert database.shape == (6, 4) and queries.shape == (2, 4)
+
+
+def test_learned_whitening_is_rejected_for_a_frozen_vit():
+    with pytest.raises(ValueError, match="learned"):
+        ViTConfig(whiten=True, whiten_source="learned")
+
+
 def test_encodes_database_and_queries_and_fits_nothing(wired):
     built, inputs = wired
 
@@ -81,5 +112,10 @@ def test_params_record_every_knob_and_nothing_else():
         "image_size": 224,
         "resize": "pad",
         "interpolation": "bicubic",
+        "dim": None,
+        "whiten": False,
+        "whiten_source": "held_out",
+        "shrinkage": 0.0,
+        "seed": 0,
     }
     assert ViTConfig.technique == "vit"

@@ -101,6 +101,8 @@ def test_vit_width_comes_from_the_model():
     assert descriptor_dim("vit", {"model": "dinov2-vitl14", "image_size": 224}) == 1024
     assert descriptor_dim("vit", {"model": "dinov3-vitl16"}) == 1024
     assert descriptor_dim("vit", {"model": "dinov1-vits16"}) is None
+    assert descriptor_dim("vit", {"model": "dinov3-vitl16", "dim": 256}) == 256
+    assert descriptor_dim("vit", {"model": "dinov3-vitl16", "dim": None, "whiten": True}) == 1024
 
 
 def test_cnn_widths_come_from_the_params():
