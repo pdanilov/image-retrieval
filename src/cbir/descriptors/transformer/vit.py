@@ -172,10 +172,10 @@ missing weight means part of the network is random, so loading fails."""
 IMAGE_SIZE = 224
 """The published protocol's input size."""
 
-Resize = Literal["pad", "aspect", "crop"]
+Resize = Literal["pad", "aspect", "crop", "stretch"]
 """How an image becomes the network's input — a part of the protocol the DINOv2 paper
-leaves unstated, and the first suspect when its rows did not reproduce. None of the three
-explained that gap (the query crop did; see the module docstring):
+leaves unstated, and the first suspect when its rows did not reproduce. None of the first
+three explained that gap (the query crop did; see the module docstring):
 
 * `pad` — DINOv3 App. D.8: longer side to `image_size`, centred on a black square.
 * `aspect` — longer side to `image_size`, aspect ratio kept and no padding; each side
@@ -184,7 +184,12 @@ explained that gap (the query crop did; see the module docstring):
 * `crop` — DINOv2's own classification eval transform: shorter side to
   `image_size * 256 / 224`, then a centre crop to `image_size`. It cuts the frame's
   edges, which on a retrieval benchmark can cut the landmark; recorded as a candidate
-  for what the paper did, not as a recommendation."""
+  for what the paper did, not as a recommendation.
+
+`stretch` is a different paper's protocol: IRT (El-Nouby et al. 2021, `2102.05644`)
+resizes every training and evaluation image "into a square image", aspect ratio
+discarded — no bars, nothing cut, the content distorted instead. Its rows, and the frozen
+DeiT rows they are measured against, are scored this way."""
 
 Interpolation = Literal["bicubic", "bilinear"]
 
@@ -224,8 +229,8 @@ class FrozenViT:
         if model not in SPECS:
             raise ValueError(f"unknown model {model!r}, expected one of {sorted(SPECS)}")
         spec = SPECS[model]
-        if resize not in ("pad", "aspect", "crop"):
-            raise ValueError(f"unknown resize {resize!r}, expected pad, aspect or crop")
+        if resize not in ("pad", "aspect", "crop", "stretch"):
+            raise ValueError(f"unknown resize {resize!r}, expected pad, aspect, crop or stretch")
         if interpolation not in RESAMPLING:
             raise ValueError(f"unknown interpolation {interpolation!r}, expected one of {sorted(RESAMPLING)}")
         if readout not in ("native", "mean", "gem"):
@@ -270,7 +275,7 @@ class FrozenViT:
     def preprocess(self, image: PILImage) -> torch.Tensor:
         """One image to a normalized `(3, h, w)` tensor, shaped as `self.resize` says.
 
-        `pad` and `crop` give `image_size` x `image_size`; `aspect` gives a rectangle
+        `pad`, `crop` and `stretch` give `image_size` x `image_size`; `aspect` gives a rectangle
         whose longer side is `image_size`. Every mode resizes up as well as down — the
         protocol fixes the side rather than capping it, so a small query crop is
         enlarged.
@@ -295,6 +300,8 @@ class FrozenViT:
             case "crop":
                 image = _scale(image, round(side * 256 / 224) / min(image.size), resampling)
                 image = tv.center_crop(image, [side, side])
+            case "stretch":
+                image = image.resize((side, side), resampling)
         return tv.normalize(tv.to_tensor(image), mean=self.spec.mean, std=self.spec.std)
 
     def _batches(self, images: Iterable[PILImage]) -> Iterator[torch.Tensor]:

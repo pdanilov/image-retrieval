@@ -39,6 +39,8 @@ class ViTConfig:
         resize: How an image is fitted to `image_size`. `pad` is the documented
             protocol; `aspect` and `crop` were ruled out as the reason the DINOv2
             paper's table does not reproduce — see `descriptors/transformer/vit.py`.
+            `stretch` squashes to the square, IRT's protocol for its rows and for the
+            frozen DeiT rows they are compared with.
         interpolation: Resampling filter. The papers name none; bicubic is what
             DINOv2's own evaluation transforms use.
         readout: Which vector becomes the descriptor. `native` is the family's own
