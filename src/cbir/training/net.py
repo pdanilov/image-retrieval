@@ -16,17 +16,21 @@ by its CLS token, trained end to end. Its network and preprocessing come from
 
 Each network also owns `load`, the path-to-tensor step for its own family, so mining,
 training and validation need not know which one they are driving: the CNN keeps the
-aspect ratio and caps the longer side at 362, the ViT squashes into IRT's square.
+aspect ratio and caps the longer side at 362, the ViT squashes into IRT's square. `load`
+is a plain function rather than a method so DataLoader workers can decode with it without
+holding the network, and `square` says whether its outputs can be stacked into a batch.
 """
 
 from __future__ import annotations
+
+import functools
 
 import torch
 from PIL import Image
 
 from cbir.descriptors.cnn.pooling import CHANNELS, Backbone, PooledCNN
 from cbir.descriptors.cnn.weights import WeightSource
-from cbir.descriptors.transformer.vit import CHECKPOINT_PREFIX, SPECS, Model, load_network, preprocess
+from cbir.descriptors.transformer.vit import CHECKPOINT_PREFIX, SPECS, Model, Spec, load_network, preprocess
 from cbir.training.tuples import IMAGE_SIZE, load_tensor
 
 EPS = 1e-6
@@ -85,15 +89,20 @@ class RetrievalNet(torch.nn.Module):
         self.pool = GeM(p)
         self.dim = CHANNELS[backbone]
         self.image_size = image_size
-
-    def load(self, path: str) -> torch.Tensor:
-        """One image as this network trains on it: aspect kept, longer side capped."""
-        return load_tensor(path, self.image_size)
+        # Aspect kept, longer side capped: shapes differ, so nothing stacks.
+        self.load = functools.partial(load_tensor, image_size=image_size)
+        self.square = False
 
     def forward(self, images: torch.Tensor) -> torch.Tensor:
         """`(B, 3, h, w)` batch to `(B, C)` unit vectors."""
         pooled = self.pool(self.features(images))
         return torch.nn.functional.normalize(pooled, p=2.0, dim=1, eps=EPS)
+
+
+def load_square(path: str, *, spec: Spec, side: int) -> torch.Tensor:
+    """One image squashed into the square, as IRT trains and evaluates."""
+    with Image.open(path) as image:
+        return preprocess(image, spec, side, "stretch", "bicubic")
 
 
 class RetrievalViT(torch.nn.Module):
@@ -125,11 +134,8 @@ class RetrievalViT(torch.nn.Module):
         self.spec = spec
         self.dim = spec.width
         self.image_size = image_size
-
-    def load(self, path: str) -> torch.Tensor:
-        """One image squashed into the square, as IRT trains and evaluates."""
-        with Image.open(path) as image:
-            return preprocess(image, self.spec, self.image_size, "stretch", "bicubic")
+        self.load = functools.partial(load_square, spec=spec, side=image_size)
+        self.square = True
 
     def forward(self, images: torch.Tensor) -> torch.Tensor:
         """`(B, 3, s, s)` batch to `(B, width)` unit vectors."""

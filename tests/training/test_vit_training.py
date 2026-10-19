@@ -129,3 +129,52 @@ def test_a_checkpoint_for_another_model_is_refused(net, tmp_path):
     _save(path, net, TrainConfig(backbone=SMALL), epoch=1, metrics={})
     with pytest.raises(ValueError, match="not dinov2-vitb14"):
         FrozenViT("dinov2-vitb14", checkpoint=str(path), device="cpu")
+
+
+# --- batching changes speed, not descriptors ---------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def paths(tmp_path_factory) -> list[str]:
+    directory = tmp_path_factory.mktemp("many")
+    rng = np.random.default_rng(1)
+    out = []
+    for i, size in enumerate([(60, 90), (80, 40), (50, 50), (90, 30), (40, 70)]):
+        path = directory / f"{i}.png"
+        Image.fromarray(rng.integers(0, 255, (*size, 3), dtype=np.uint8)).save(path)
+        out.append(str(path))
+    return out
+
+
+@pytest.mark.parametrize("workers", [0, 2])
+def test_batched_describe_matches_one_forward_per_image_in_order(net, paths, workers, monkeypatch):
+    from cbir.training import tuples
+
+    monkeypatch.setattr(tuples, "BATCH", 2)  # several batches, one of them short
+    with torch.inference_mode():
+        batched = tuples.describe(net, paths, "cpu", None, "", workers=workers)
+        single = torch.cat([net(net.load(path).unsqueeze(0)) for path in paths])
+    torch.testing.assert_close(batched, single, atol=1e-5, rtol=0)
+
+
+def test_a_tuple_through_the_loop_is_one_batch_with_the_same_loss(net, paths):
+    # train_epoch stacks a square tuple into one forward; the loss must be the one seven
+    # separate forwards give, or batching changed the objective.
+    from cbir.training.loop import train_epoch
+    from cbir.training.loss import contrastive_loss
+
+    images = [net.load(path) for path in paths]
+    calls = []
+    forward = net.forward
+    net.forward = lambda x: calls.append(len(x)) or forward(x)
+    try:
+        optimizer = torch.optim.SGD(net.parameters(), lr=0.0)
+        loss = train_epoch(net, [images], optimizer, 0.85, batch_size=1, device="cpu", workers=0)
+    finally:
+        del net.forward
+    with torch.no_grad():
+        d = torch.cat([forward(image.unsqueeze(0)) for image in images])
+        expected = contrastive_loss(d[:1], d[1:2], d[2:].unsqueeze(0), 0.85)
+
+    assert calls == [len(paths)]
+    assert loss == pytest.approx(float(expected), abs=1e-5)

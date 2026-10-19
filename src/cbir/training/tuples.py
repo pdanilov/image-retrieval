@@ -50,6 +50,29 @@ QUERY_SIZE = 2000
 POOL_SIZE = 22000
 """Images descriptors are extracted for, to mine negatives from."""
 
+WORKERS = 8
+"""DataLoader processes decoding images while the GPU runs. Decoding JPEGs in the main
+thread left the GPU idle for most of an epoch; the order of images is unchanged."""
+
+
+def loader(dataset, *, batch_size: int | None, workers: int) -> torch.utils.data.DataLoader:
+    """An in-order DataLoader whose workers are started by `forkserver`, never `fork`.
+
+    The training process holds CUDA and several threads by the time it decodes anything,
+    and forking such a process can deadlock the child — a hang that, over a 100-epoch
+    run, the heartbeat would catch only after the fact. `forkserver` starts workers from
+    a clean process; the cost is a second or two per loader.
+    """
+    context = "forkserver" if workers else None
+    return torch.utils.data.DataLoader(
+        dataset, batch_size=batch_size, num_workers=workers, multiprocessing_context=context
+    )
+
+
+BATCH = 64
+"""Images per forward when describing for mining or validation, for networks whose inputs
+stack. Inference only, so it changes speed, not what is computed."""
+
 NEG_NUM = 5
 """Negatives per tuple, each from a different cluster."""
 
@@ -170,6 +193,7 @@ def sample_epoch(
     device: str = "cuda",
     seed: int = 0,
     log=None,
+    workers: int = WORKERS,
 ) -> EpochTuples:
     """Sample queries and a negative pool, then mine negatives with the current model."""
     rng = np.random.default_rng(seed)
@@ -180,19 +204,37 @@ def sample_epoch(
 
     model.eval()
     with torch.inference_mode():
-        query_vectors = _describe(model, [corpus.path(i) for i in queries], device, log, "queries")
-        pool_vectors = _describe(model, [corpus.path(i) for i in pool], device, log, "pool")
+        query_vectors = describe(model, [corpus.path(i) for i in queries], device, log, "mining: queries", workers)
+        pool_vectors = describe(model, [corpus.path(i) for i in pool], device, log, "mining: pool", workers)
         scores = pool_vectors @ query_vectors.T
 
     negatives = mine_negatives(scores.cpu(), pool, [corpus.cluster[i] for i in queries], corpus.cluster, neg_num)
     return EpochTuples(corpus, queries, positives, negatives, model.load)
 
 
-def _describe(model: torch.nn.Module, paths: list[str], device: str, log, what: str) -> torch.Tensor:
-    """`(n, D)` descriptors, one forward per image — sizes differ, so they cannot batch."""
-    vectors = []
-    for i, path in enumerate(paths):
-        vectors.append(model(model.load(path).unsqueeze(0).to(device)).squeeze(0))
-        if log is not None and (i + 1) % 2000 == 0:
-            log(f"  mining: {what} {i + 1}/{len(paths)}")
-    return torch.stack(vectors)
+class _Images(torch.utils.data.Dataset):
+    def __init__(self, paths: list[str], load: Callable[[str], torch.Tensor]) -> None:
+        self.paths = paths
+        self.load = load
+
+    def __len__(self) -> int:
+        return len(self.paths)
+
+    def __getitem__(self, index: int) -> torch.Tensor:
+        return self.load(self.paths[index])
+
+
+def describe(model: torch.nn.Module, paths: list[str], device: str, log, what: str, workers: int = WORKERS):
+    """`(n, D)` descriptors in `paths` order, decoded by `workers` processes.
+
+    Batched by `BATCH` when the network's inputs are square; one image per forward
+    otherwise, since aspect-preserved sizes differ. Call under `inference_mode`.
+    """
+    vectors, done, reported = [], 0, 0
+    for batch in loader(_Images(paths, model.load), batch_size=BATCH if model.square else 1, workers=workers):
+        vectors.append(model(batch.to(device)))
+        done += len(batch)
+        if log is not None and done // 2000 > reported:
+            reported = done // 2000
+            log(f"  {what} {done}/{len(paths)}")
+    return torch.cat(vectors)

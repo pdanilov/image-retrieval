@@ -226,6 +226,7 @@ def train_cmd(
     whiten: bool | None = None,
     whiten_pairs: int = 20000,
     entropy_weight: float = 0.0,
+    workers: int = 8,
     patience: int | None = 5,
     min_delta: float = 0.001,
     resume: bool = True,
@@ -266,6 +267,7 @@ def train_cmd(
         whiten_pairs: Matching pairs the projection is fitted on.
         entropy_weight: IRT_R's lambda on the KoLeo differential-entropy term. 0 is
             plain contrastive training (IRT_L).
+        workers: DataLoader processes decoding images. Speed only; the order is fixed.
         patience: Stop after this many epochs with no validation-mAP gain larger than
             `min_delta`. `None` runs the full schedule, as the reference does.
         min_delta: How much an epoch must beat the running best by to count as progress.
@@ -291,6 +293,7 @@ def train_cmd(
         whiten=whiten,
         whiten_pairs=whiten_pairs,
         entropy_weight=entropy_weight,
+        workers=workers,
         patience=patience,
         min_delta=min_delta,
         resume=resume,

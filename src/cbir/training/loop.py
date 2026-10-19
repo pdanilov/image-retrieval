@@ -37,7 +37,10 @@ from cbir.training.tuples import (
     NEG_NUM,
     POOL_SIZE,
     QUERY_SIZE,
+    WORKERS,
     Corpus,
+    describe,
+    loader,
     sample_epoch,
 )
 from cbir.training.whitening import PAIRS, attach, fit
@@ -119,6 +122,7 @@ class TrainConfig:
     min_delta: float = 0.001
     resume: bool = True
     entropy_weight: float = 0.0
+    workers: int = WORKERS
     seed: int = 0
     out: Path = field(default=Path("data/runs"))
 
@@ -143,7 +147,7 @@ class TrainConfig:
         return self.whiten
 
 
-def validate(model: torch.nn.Module, corpus: Corpus, device: str, log=None) -> dict[str, float]:
+def validate(model: torch.nn.Module, corpus: Corpus, device: str, log=None, workers: int = WORKERS) -> dict[str, float]:
     """Retrieval accuracy on the held-out split, by SfM cluster.
 
     A retrieval metric rather than the validation loss: loss falls as the mined negatives
@@ -157,12 +161,8 @@ def validate(model: torch.nn.Module, corpus: Corpus, device: str, log=None) -> d
 
     model.eval()
     with torch.inference_mode():
-        vectors = []
-        for i in range(len(corpus.cids)):
-            vectors.append(model(model.load(corpus.path(i)).unsqueeze(0).to(device)).squeeze(0))
-            if log is not None and (i + 1) % 2000 == 0:
-                log(f"  validating: {i + 1}/{len(corpus.cids)}")
-        embeddings = torch.stack(vectors)
+        paths = [corpus.path(i) for i in range(len(corpus.cids))]
+        embeddings = describe(model, paths, device, log, "validating:", workers)
 
     labels = torch.tensor(corpus.cluster, device=embeddings.device)
     # Exact KNN by matmul, not the FaissKNN default: AGENTS.md keeps search exact and in
@@ -207,19 +207,35 @@ def _freeze_batchnorm(module: torch.nn.Module) -> None:
 
 
 def train_epoch(
-    model, tuples, optimizer, margin: float, batch_size: int, device: str, log=None, entropy_weight: float = 0.0
+    model,
+    tuples,
+    optimizer,
+    margin: float,
+    batch_size: int,
+    device: str,
+    log=None,
+    entropy_weight: float = 0.0,
+    workers: int = WORKERS,
 ) -> float:
-    """One pass over the epoch's tuples. Returns the mean per-tuple loss."""
+    """One pass over the epoch's tuples. Returns the mean per-tuple loss.
+
+    Tuples are decoded ahead by `workers` processes, in order. A tuple whose images share
+    one shape — always, for a ViT's square inputs — goes through the network as one
+    batch; that computes the same descriptors as seven forwards, since nothing in a ViT
+    (and no frozen BatchNorm) mixes images within a batch.
+    """
     model.train()
     # After `train()`, never before: `train()` would put them straight back.
     model.apply(_freeze_batchnorm)
     optimizer.zero_grad()
     total = 0.0
 
-    for index in range(len(tuples)):
-        images = tuples[index]
-        # One forward per image: they differ in size, so they cannot be stacked.
-        descriptors = torch.cat([model(image.unsqueeze(0).to(device)) for image in images])
+    for index, images in enumerate(loader(tuples, batch_size=None, workers=workers) if len(tuples) else tuples):
+        if all(image.shape == images[0].shape for image in images):
+            descriptors = model(torch.stack(images).to(device))
+        else:
+            # One forward per image: they differ in size, so they cannot be stacked.
+            descriptors = torch.cat([model(image.unsqueeze(0).to(device)) for image in images])
         query = descriptors[:1]
         positive = descriptors[1:2]
         negatives = descriptors[2:].unsqueeze(0)
@@ -343,7 +359,7 @@ def train(config: TrainConfig, device: str | None = None, log=_log) -> Path:
     else:
         # Measured before any training so every later epoch has something to be better
         # than — and because a baseline that is already wrong catches a broken init.
-        baseline = validate(model, val_corpus, device, log)
+        baseline = validate(model, val_corpus, device, log, config.workers)
         log(f"epoch 0 (untrained): {baseline}")
         _track(
             0,
@@ -369,10 +385,13 @@ def train(config: TrainConfig, device: str | None = None, log=_log) -> Path:
             device=device,
             seed=config.seed + epoch,
             log=log,
+            workers=config.workers,
         )
-        loss = train_epoch(model, tuples, optimizer, margin, config.batch_size, device, log, config.entropy_weight)
+        loss = train_epoch(
+            model, tuples, optimizer, margin, config.batch_size, device, log, config.entropy_weight, config.workers
+        )
         scheduler.step()
-        metrics = validate(model, val_corpus, device, log)
+        metrics = validate(model, val_corpus, device, log, config.workers)
 
         # Reserved, not allocated: images vary in size, so the caching allocator holds
         # blocks it cannot reuse for the next shape. Logged because that number growing
