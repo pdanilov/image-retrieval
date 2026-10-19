@@ -206,7 +206,7 @@ Three eras, evaluated under the same protocol:
 - **Transformer era**: vision transformers as global descriptors, split like the CNN
   tier into a **frozen** half (DINOv2, DINOv3, SigLIP 2, each read out by its own image
   embedding) and a
-  **trainable** half (IRT, then fine-tuned DINOv2), L2-normalized, cosine similarity.
+  **trainable** half (IRT, then DINOv2 fine-tuned in full and with LoRA), L2-normalized, cosine similarity.
   The frozen half comes first; the trainable half must beat it to earn its place. See
   below.
 
@@ -417,31 +417,76 @@ roxford, as in its paper) and the cropped/uncropped split above.
 **IRT** (El-Nouby et al., 2021, [2102.05644](https://arxiv.org/abs/2102.05644)) is the
 GeM recipe with the backbone swapped: DeiT instead of ResNet, CLS instead of GeM, the
 same retrieval-SfM-120k tuples and the same contrastive loss — the authors ran
-`cnnimageretrieval-pytorch` itself. Recipe: tuples of 1 anchor, 1 positive, 5 negatives;
-2000 pairs and a 22000-image negative pool per epoch; Adam, lr 5e-7, weight decay 1e-6;
-margin 0.85; 100 epochs; **square** inputs of 224 or 384; PCA-whitening fitted on SfM.
-IRT_R adds a differential-entropy (KoLeo) regularizer that spreads descriptors over the
+`cnnimageretrieval-pytorch` itself. Recipe (IRT §4.2, checked against the paper's text):
+tuples of 1 anchor, 1 positive, 5 negatives, 5 tuples per batch; 2000 pairs and a
+22000-image negative pool per epoch; Adam, lr 5e-7, weight decay 1e-6; margin 0.85; 100
+epochs. IRT_R adds a differential-entropy (KoLeo) term, `L = L_contr + λ L_KoLeo` with
+`L_KoLeo = -(1/N) Σ_i log min_{j≠i} ‖z_i − z_j‖`, which spreads descriptors over the
 sphere.
+
+What the paper says, and does not say, that changes the numbers:
+
+- **Inputs are stretched, not padded.** Training *and* evaluation images, queries and
+  database alike, are "resized into a square image with the same resolution as used
+  during the finetuning stage" — aspect ratio discarded. That is neither of the frozen
+  tier's `pad`/`aspect`/`crop`, so IRT rows need their own `stretch` mode, and the frozen
+  DeiT rows they are compared against must be re-scored under it. Queries are still
+  cropped to `bbx` first; the reference code does that too.
+- **PCA, not stated as whitening.** "The dimensionality reduction is achieved using a PCA
+  trained on the SFM120k dataset." Whether the full-width rows were whitened is not said.
+- **λ for the retrieval rows is not stated.** The 0.7 in §4.2 belongs to the
+  category-level benchmarks; Table 6 sweeps λ for DeiT-S without saying which value the
+  Table 8 row used. Choose λ on the SfM validation split, never on Oxford/Paris.
 
 | IRT row (all trained the same way) | dims | ROxf M | ROxf H | RPar M | RPar H |
 |------------------------------------|------|--------|--------|--------|--------|
+| DeiT-S† 224², CLS, contrastive (Table 7) | 384 | 34.5 | 15.8 | 65.8 | 42.0 |
+| DeiT-B† 224², CLS, contrastive (Table 7) | 768 | 39.5 | 17.4 | 67.5 | 43.6 |
 | DeiT-B† 384², CLS, contrastive | 768 | 50.5 | 22.7 | 70.6 | 47.4 |
 | DeiT-B† 384², CLS, + entropy reg (IRT_R) | 768 | 55.1 | 28.3 | 72.7 | 49.6 |
 | ResNet101 GeM 384², same recipe | 2048 | 38.1 | 12.5 | 69.4 | 45.8 |
+
+The DeiT-S† 224 row is the cheap first target: it exercises the whole pipeline at a
+fraction of the B† 384 cost.
 
 **No IRT checkpoints were published**, so unlike the CNN tier the target is the final
 mAP alone — there are no weights or descriptors to compare against. Note also that IRT
 beats ResNet101 GeM at the *same* 384 input but not the GeM evaluated at 1024; report
 that rather than the flattering comparison.
 
-What `training/` needs to host it, generalized in place rather than duplicated: a ViT
-+ CLS head beside CNN + GeM in `net.py`; square resizing in `tuples.py` (the CNN recipe
-keeps aspect ratio at 362); a ViT margin and the optional entropy term in `loss.py`; and
-`whitening.py` taking any extractor instead of `PooledCNN`.
+What `training/` needs to host it, generalized in place rather than duplicated:
 
-After IRT reproduces, the experiment worth running is the same recipe on DINOv2-S/B. It
-is justified only if it beats the frozen DINOv2 row — if it does not, that is the
-finding. 16 GB fits ViT-S/B training (gradients accumulate per tuple); ViT-L does not.
+- `net.py`: a ViT + CLS head beside CNN + GeM, built from the frozen tier's `SPECS`, with
+  CLS read from `last_hidden_state` (DeiT's `pooler` is untrained).
+- `tuples.py`: square `stretch` resizing (the CNN recipe keeps aspect ratio at 362).
+  Square inputs stack, so a tuple's seven images — and mining and validation — can run
+  as batches rather than one forward per image.
+- `loss.py`: the ViT margin and the optional KoLeo term, pinned by a hand-computed test.
+- `loop.py`: no BatchNorm freezing for ViTs (they use LayerNorm); `p` logged only for
+  GeM. Run the full 100 epochs: early stopping already cut ResNet101 short at 19.
+- Evaluation: a `checkpoint` field on `ViTConfig`, so a trained network is scored by the
+  same path as a frozen one; PCA fitted on `sfm120k`, which the frozen tier already has.
+
+Order of work, cheapest first:
+
+1. `stretch` in the harness; frozen DeiT-S†/B† re-scored under it at 224 and 384 — the
+   "before" row in the protocol the "after" row will use.
+2. IRT_L on DeiT-S† 224, then DeiT-B† 384; then IRT_R with λ chosen on SfM validation.
+3. The same recipe on DINOv2-S/B (full fine-tuning). It is justified only if it beats
+   the frozen DINOv2 row at the same protocol — if it does not, that is the finding.
+4. **LoRA** on the same DINOv2-S/B, then on DINOv3-L, the tier's best frozen row. The
+   question it answers is whether retrieval training adds anything *without* overwriting
+   what 142M-image pretraining learned, and it is what makes ViT-L trainable at all on
+   16 GB. Rules: never for the IRT reproduction (IRT fine-tunes every weight, and a
+   different method cannot reproduce its number); the recipe's lr 5e-7 is a full
+   fine-tuning value, so lr, rank and target modules are new knobs, recorded in the run
+   config and chosen on SfM validation; adapters are merged into the weights after
+   training (`peft`'s `merge_and_unload`), so the checkpoint is a plain model and the
+   evaluation path does not change.
+
+Whether full fine-tuning of ViT-L fits 16 GB is unmeasured — about 5 GB of weights,
+gradients and Adam state in fp32 plus activations, so possibly with bf16. Measure before
+ruling it in or out.
 
 ## Search backend
 
