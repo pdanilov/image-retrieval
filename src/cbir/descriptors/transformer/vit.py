@@ -223,6 +223,7 @@ class FrozenViT:
         interpolation: Interpolation = "bicubic",
         readout: Readout = "native",
         p: float | None = None,
+        checkpoint: str | None = None,
         device: str | None = None,
         batch_size: int = 64,
     ) -> None:
@@ -257,52 +258,15 @@ class FrozenViT:
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.batch_size = batch_size
 
-        # Imported here, not at module scope: transformers is a multi-second import that
-        # nothing but this class needs, and `cbir results` should not pay for it.
-        if spec.siglip:
-            # The vision tower alone. `AutoModel` would load the text tower too, which
-            # nothing here calls, and its forward requires text inputs.
-            from transformers import SiglipVisionModel as Loader
-        else:
-            from transformers import AutoModel as Loader
-
-        network, info = Loader.from_pretrained(spec.repo, output_loading_info=True)
-        missing = _unexpectedly_missing(info["missing_keys"])
-        if missing:
-            raise RuntimeError(f"{spec.repo} left {len(missing)} weights uninitialized, e.g. {sorted(missing)[:3]}")
+        network = load_network(spec)
+        if checkpoint is not None:
+            load_checkpoint(network, model, checkpoint)
+        self.checkpoint = checkpoint
         self._model = network.to(self.device).eval()
 
     def preprocess(self, image: PILImage) -> torch.Tensor:
-        """One image to a normalized `(3, h, w)` tensor, shaped as `self.resize` says.
-
-        `pad`, `crop` and `stretch` give `image_size` x `image_size`; `aspect` gives a rectangle
-        whose longer side is `image_size`. Every mode resizes up as well as down — the
-        protocol fixes the side rather than capping it, so a small query crop is
-        enlarged.
-        """
-        from torchvision.transforms import functional as tv
-
-        image = image.convert("RGB")
-        resampling = RESAMPLING[self.interpolation]
-        side = self.image_size
-        match self.resize:
-            case "pad":
-                image = _scale(image, side / max(image.size), resampling)
-                # torchvision pads a crop larger than the image with zeros and centres
-                # it, which is what "take a full center crop" of a 224-px-long image can
-                # only mean.
-                image = tv.center_crop(image, [side, side])
-            case "aspect":
-                factor = side / max(image.size)
-                patch = self.spec.patch
-                size = (_patches(image.width * factor, patch), _patches(image.height * factor, patch))
-                image = image.resize(size, resampling)
-            case "crop":
-                image = _scale(image, round(side * 256 / 224) / min(image.size), resampling)
-                image = tv.center_crop(image, [side, side])
-            case "stretch":
-                image = image.resize((side, side), resampling)
-        return tv.normalize(tv.to_tensor(image), mean=self.spec.mean, std=self.spec.std)
+        """One image to a normalized `(3, h, w)` tensor, shaped as `self.resize` says."""
+        return preprocess(image, self.spec, self.image_size, self.resize, self.interpolation)
 
     def _batches(self, images: Iterable[PILImage]) -> Iterator[torch.Tensor]:
         batch: list[torch.Tensor] = []
@@ -351,6 +315,79 @@ class FrozenViT:
         if not vectors:
             return np.zeros((0, self.spec.width), dtype=np.float32)
         return safe_l2_normalize(np.concatenate(vectors).astype(np.float32), axis=1)
+
+
+def load_network(spec: Spec) -> torch.nn.Module:
+    """The pretrained network behind `spec`, refusing one with untrained weights.
+
+    Shared with `training/`, so the network fine-tuned there is the one scored here.
+    """
+    # Imported here, not at module scope: transformers is a multi-second import that
+    # nothing but this needs, and `cbir results` should not pay for it.
+    if spec.siglip:
+        # The vision tower alone. `AutoModel` would load the text tower too, which
+        # nothing here calls, and its forward requires text inputs.
+        from transformers import SiglipVisionModel as Loader
+    else:
+        from transformers import AutoModel as Loader
+
+    network, info = Loader.from_pretrained(spec.repo, output_loading_info=True)
+    missing = _unexpectedly_missing(info["missing_keys"])
+    if missing:
+        raise RuntimeError(f"{spec.repo} left {len(missing)} weights uninitialized, e.g. {sorted(missing)[:3]}")
+    return network
+
+
+CHECKPOINT_PREFIX = "network."
+"""Where `training.net.RetrievalViT` keeps the Hugging Face model in its state dict."""
+
+
+def load_checkpoint(network: torch.nn.Module, model: str, path: str) -> None:
+    """Overwrite `network` with weights fine-tuned by `cbir train`, in place.
+
+    Strict: a checkpoint that does not cover every weight would leave part of the
+    pretrained network in place and report its numbers as the fine-tuned one's.
+    """
+    payload = torch.load(path, map_location="cpu", weights_only=False)
+    architecture = payload["meta"]["architecture"]
+    if architecture != model:
+        raise ValueError(f"{path} is a {architecture} checkpoint, not {model}")
+    state = {
+        key.removeprefix(CHECKPOINT_PREFIX): value
+        for key, value in payload["state_dict"].items()
+        if key.startswith(CHECKPOINT_PREFIX)
+    }
+    network.load_state_dict(state, strict=True)
+
+
+def preprocess(image: PILImage, spec: Spec, side: int, resize: Resize, interpolation: Interpolation) -> torch.Tensor:
+    """One image to a normalized `(3, h, w)` tensor, shaped as `resize` says.
+
+    `pad`, `crop` and `stretch` give `side` x `side`; `aspect` gives a rectangle whose
+    longer side is `side`. Every mode resizes up as well as down — the protocol fixes the
+    side rather than capping it, so a small query crop is enlarged. Module-level so that
+    training feeds the network exactly the geometry evaluation does.
+    """
+    from torchvision.transforms import functional as tv
+
+    image = image.convert("RGB")
+    resampling = RESAMPLING[interpolation]
+    match resize:
+        case "pad":
+            image = _scale(image, side / max(image.size), resampling)
+            # torchvision pads a crop larger than the image with zeros and centres it,
+            # which is what "take a full center crop" of a 224-px-long image can only mean.
+            image = tv.center_crop(image, [side, side])
+        case "aspect":
+            factor = side / max(image.size)
+            size = (_patches(image.width * factor, spec.patch), _patches(image.height * factor, spec.patch))
+            image = image.resize(size, resampling)
+        case "crop":
+            image = _scale(image, round(side * 256 / 224) / min(image.size), resampling)
+            image = tv.center_crop(image, [side, side])
+        case "stretch":
+            image = image.resize((side, side), resampling)
+    return tv.normalize(tv.to_tensor(image), mean=spec.mean, std=spec.std)
 
 
 def _patch_tokens(hidden: torch.Tensor, prefix: int, patches: int) -> torch.Tensor:

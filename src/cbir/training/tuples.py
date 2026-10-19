@@ -25,6 +25,7 @@ Two details in the mining are not obvious and both matter:
 from __future__ import annotations
 
 import pickle
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
@@ -130,8 +131,16 @@ def mine_negatives(
 class EpochTuples:
     """The tuples for one epoch: sampled queries, their positives, and mined negatives."""
 
-    def __init__(self, corpus: Corpus, queries: list[int], positives: list[int], negatives: list[list[int]]) -> None:
+    def __init__(
+        self,
+        corpus: Corpus,
+        queries: list[int],
+        positives: list[int],
+        negatives: list[list[int]],
+        load: Callable[[str], torch.Tensor] = load_tensor,
+    ) -> None:
         self.corpus = corpus
+        self.load = load
         self.queries = queries
         self.positives = positives
         self.negatives = negatives
@@ -148,7 +157,7 @@ class EpochTuples:
         or distorting the aspect ratio.
         """
         members = [self.queries[index], self.positives[index], *self.negatives[index]]
-        return [load_tensor(self.corpus.path(i)) for i in members]
+        return [self.load(self.corpus.path(i)) for i in members]
 
 
 def sample_epoch(
@@ -176,14 +185,14 @@ def sample_epoch(
         scores = pool_vectors @ query_vectors.T
 
     negatives = mine_negatives(scores.cpu(), pool, [corpus.cluster[i] for i in queries], corpus.cluster, neg_num)
-    return EpochTuples(corpus, queries, positives, negatives)
+    return EpochTuples(corpus, queries, positives, negatives, model.load)
 
 
 def _describe(model: torch.nn.Module, paths: list[str], device: str, log, what: str) -> torch.Tensor:
     """`(n, D)` descriptors, one forward per image — sizes differ, so they cannot batch."""
     vectors = []
     for i, path in enumerate(paths):
-        vectors.append(model(load_tensor(path).unsqueeze(0).to(device)).squeeze(0))
+        vectors.append(model(model.load(path).unsqueeze(0).to(device)).squeeze(0))
         if log is not None and (i + 1) % 2000 == 0:
             log(f"  mining: {what} {i + 1}/{len(paths)}")
     return torch.stack(vectors)

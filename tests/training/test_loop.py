@@ -34,8 +34,11 @@ def test_a_backbone_with_no_published_margin_refuses_to_guess():
 def test_the_defaults_are_the_reference_command():
     # These are not choices made here, and a drift would be a silent divergence from the
     # recipe this branch exists to reproduce.
+    from cbir.training.tuples import IMAGE_SIZE
+
     config = TrainConfig()
-    assert (config.image_size, config.neg_num) == (362, 5)
+    # `image_size=None` resolves per family: 362 for a CNN, the native size for a ViT.
+    assert (config.image_size, IMAGE_SIZE, config.neg_num) == (None, 362, 5)
     assert (config.query_size, config.pool_size) == (2000, 22000)
     assert (config.lr, config.weight_decay, config.batch_size) == (5e-7, 1e-6, 5)
 

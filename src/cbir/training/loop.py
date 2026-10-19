@@ -29,15 +29,15 @@ import torch
 
 from cbir.descriptors.cnn.pooling import Backbone
 from cbir.descriptors.cnn.weights import WeightSource
-from cbir.training.loss import MARGIN, contrastive_loss
-from cbir.training.net import RetrievalNet
+from cbir.descriptors.transformer.vit import SPECS, Model
+from cbir.training.loss import MARGIN, VIT_MARGIN, contrastive_loss, koleo
+from cbir.training.net import RetrievalNet, RetrievalViT
 from cbir.training.tuples import (
     IMAGE_SIZE,
     NEG_NUM,
     POOL_SIZE,
     QUERY_SIZE,
     Corpus,
-    load_tensor,
     sample_epoch,
 )
 from cbir.training.whitening import PAIRS, attach, fit
@@ -87,9 +87,20 @@ class TrainConfig:
     makes a restart policy worth having: without it a crash at epoch 25 restarts from
     zero, and a supervisor that restarts a non-resumable job is worse than no supervisor.
     Turn it off only to force a fresh run into a directory that already holds one.
+
+    A transformer `backbone` (any CLS model in the frozen tier's `SPECS`) trains IRT's
+    network instead (El-Nouby et al. 2021), which runs the same recipe with the backbone
+    swapped: margin 0.85, inputs squashed into a square, CLS for GeM. Three knobs then
+    resolve differently. `image_size` defaults to the checkpoint's native size (224 for
+    DINO) rather than 362. `whiten` defaults off and cannot be turned on: IRT reduces with
+    PCA on SfM at evaluation, not with the supervised projection fitted here. `weights`
+    does not apply — the model name fixes the pretrained checkpoint.
+
+    `entropy_weight` is IRT_R's lambda on the KoLeo term (see `loss.koleo`), computed over
+    each tuple's descriptors. Zero is plain contrastive training, IRT_L.
     """
 
-    backbone: Backbone = "vgg16"
+    backbone: Backbone | Model = "vgg16"
     weights: WeightSource = "caffe"
     epochs: int = 30
     lr: float = 5e-7
@@ -97,28 +108,42 @@ class TrainConfig:
     lr_gamma: float = 0.99005  # exp(-0.01)
     batch_size: int = 5
     margin: float | None = None
-    image_size: int = IMAGE_SIZE
+    image_size: int | None = None
     query_size: int = QUERY_SIZE
     pool_size: int = POOL_SIZE
     neg_num: int = NEG_NUM
     p: float = 3.0
-    whiten: bool = True
+    whiten: bool | None = None
     whiten_pairs: int = PAIRS
     patience: int | None = 5
     min_delta: float = 0.001
     resume: bool = True
+    entropy_weight: float = 0.0
     seed: int = 0
     out: Path = field(default=Path("data/runs"))
+
+    @property
+    def vit(self) -> bool:
+        return self.backbone in SPECS
 
     def resolved_margin(self) -> float:
         if self.margin is not None:
             return self.margin
+        if self.vit:
+            return VIT_MARGIN
         if self.backbone not in MARGIN:
             raise ValueError(f"no published margin for {self.backbone!r}; pass --margin explicitly")
         return MARGIN[self.backbone]
 
+    def resolved_whiten(self) -> bool:
+        if self.whiten is None:
+            return not self.vit
+        if self.whiten and self.vit:
+            raise ValueError("supervised whitening is fitted for CNN checkpoints only; IRT uses PCA at evaluation")
+        return self.whiten
 
-def validate(model: torch.nn.Module, corpus: Corpus, device: str, image_size: int, log=None) -> dict[str, float]:
+
+def validate(model: torch.nn.Module, corpus: Corpus, device: str, log=None) -> dict[str, float]:
     """Retrieval accuracy on the held-out split, by SfM cluster.
 
     A retrieval metric rather than the validation loss: loss falls as the mined negatives
@@ -134,7 +159,7 @@ def validate(model: torch.nn.Module, corpus: Corpus, device: str, image_size: in
     with torch.inference_mode():
         vectors = []
         for i in range(len(corpus.cids)):
-            vectors.append(model(load_tensor(corpus.path(i), image_size).unsqueeze(0).to(device)).squeeze(0))
+            vectors.append(model(model.load(corpus.path(i)).unsqueeze(0).to(device)).squeeze(0))
             if log is not None and (i + 1) % 2000 == 0:
                 log(f"  validating: {i + 1}/{len(corpus.cids)}")
         embeddings = torch.stack(vectors)
@@ -181,7 +206,9 @@ def _freeze_batchnorm(module: torch.nn.Module) -> None:
         module.eval()
 
 
-def train_epoch(model, tuples, optimizer, margin: float, batch_size: int, device: str, log=None) -> float:
+def train_epoch(
+    model, tuples, optimizer, margin: float, batch_size: int, device: str, log=None, entropy_weight: float = 0.0
+) -> float:
     """One pass over the epoch's tuples. Returns the mean per-tuple loss."""
     model.train()
     # After `train()`, never before: `train()` would put them straight back.
@@ -198,6 +225,8 @@ def train_epoch(model, tuples, optimizer, margin: float, batch_size: int, device
         negatives = descriptors[2:].unsqueeze(0)
 
         loss = contrastive_loss(query, positive, negatives, margin)
+        if entropy_weight:
+            loss = loss + entropy_weight * koleo(descriptors)
         loss.backward()
         total += float(loss.item())
 
@@ -288,13 +317,17 @@ def train(config: TrainConfig, device: str | None = None, log=_log) -> Path:
     torch.manual_seed(config.seed)
     log = _with_heartbeat(log, Path(config.out) / HEARTBEAT)
 
-    model = RetrievalNet(config.backbone, p=config.p, weights=config.weights).to(device)
+    model = _build(config).to(device)
     margin = config.resolved_margin()
+    whiten = config.resolved_whiten()
     optimizer = torch.optim.Adam(model.parameters(), lr=config.lr, weight_decay=config.weight_decay)
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=config.lr_gamma)
 
     train_corpus, val_corpus = Corpus.load("train"), Corpus.load("val")
-    run = f"{config.backbone}-gem-margin{margin}-lr{config.lr:g}-seed{config.seed}"
+    run = f"{config.backbone}-{_pooling(model)}-margin{margin}-lr{config.lr:g}"
+    if config.entropy_weight:
+        run += f"-koleo{config.entropy_weight:g}"
+    run += f"-seed{config.seed}"
     directory = Path(config.out) / run
     directory.mkdir(parents=True, exist_ok=True)
     log(f"{run}: {len(train_corpus.cids)} train images, {len(val_corpus.cids)} val, device {device}")
@@ -310,11 +343,11 @@ def train(config: TrainConfig, device: str | None = None, log=_log) -> Path:
     else:
         # Measured before any training so every later epoch has something to be better
         # than — and because a baseline that is already wrong catches a broken init.
-        baseline = validate(model, val_corpus, device, config.image_size, log)
+        baseline = validate(model, val_corpus, device, log)
         log(f"epoch 0 (untrained): {baseline}")
         _track(
             0,
-            {f"val/{k}": v for k, v in baseline.items()} | {"p": model.pool.p.item()},
+            {f"val/{k}": v for k, v in baseline.items()} | _exponent(model),
             config,
             run,
             fresh=True,
@@ -337,9 +370,9 @@ def train(config: TrainConfig, device: str | None = None, log=_log) -> Path:
             seed=config.seed + epoch,
             log=log,
         )
-        loss = train_epoch(model, tuples, optimizer, margin, config.batch_size, device, log)
+        loss = train_epoch(model, tuples, optimizer, margin, config.batch_size, device, log, config.entropy_weight)
         scheduler.step()
-        metrics = validate(model, val_corpus, device, config.image_size, log)
+        metrics = validate(model, val_corpus, device, log)
 
         # Reserved, not allocated: images vary in size, so the caching allocator holds
         # blocks it cannot reuse for the next shape. Logged because that number growing
@@ -347,12 +380,15 @@ def train(config: TrainConfig, device: str | None = None, log=_log) -> Path:
         reserved = torch.cuda.max_memory_reserved() / 1024**3 if device.startswith("cuda") else 0.0
         log(
             f"epoch {epoch}/{config.epochs}: loss {loss:.4f} "
-            f"mAP {metrics['mean_average_precision']:.4f} p {model.pool.p.item():.4f} "
+            f"mAP {metrics['mean_average_precision']:.4f}"
+            + "".join(f" {k} {v:.4f}" for k, v in _exponent(model).items())
+            + " "
             f"({time.time() - started:.0f}s, {reserved:.1f} GB reserved)"
         )
         _track(
             epoch,
-            {"train/loss": loss, "p": model.pool.p.item(), "lr": scheduler.get_last_lr()[0]}
+            {"train/loss": loss, "lr": scheduler.get_last_lr()[0]}
+            | _exponent(model)
             | {f"val/{k}": v for k, v in metrics.items()}
             | {"gpu/reserved_gb": reserved},
         )
@@ -380,7 +416,7 @@ def train(config: TrainConfig, device: str | None = None, log=_log) -> Path:
             )
             break
 
-    if config.whiten:
+    if whiten:
         # Freed first: the trained model, its gradients and Adam's two moments are all
         # still resident, and fitting loads a second copy of the network. Not `tuples`,
         # which is unbound when the loop never ran -- re-invoking a finished run to fit
@@ -392,6 +428,24 @@ def train(config: TrainConfig, device: str | None = None, log=_log) -> Path:
         attach(best_path, fit(str(best_path), config.backbone, pairs=config.whiten_pairs, seed=config.seed, log=log))
 
     return best_path
+
+
+def _build(config: TrainConfig) -> torch.nn.Module:
+    """The network `config` trains: IRT's ViT for a transformer backbone, else GeM."""
+    if config.vit:
+        return RetrievalViT(config.backbone, image_size=config.image_size)
+    image_size = config.image_size if config.image_size is not None else IMAGE_SIZE
+    return RetrievalNet(config.backbone, p=config.p, weights=config.weights, image_size=image_size)
+
+
+def _pooling(model: torch.nn.Module) -> str:
+    return "cls" if isinstance(model, RetrievalViT) else "gem"
+
+
+def _exponent(model: torch.nn.Module) -> dict[str, float]:
+    """GeM's learned `p`, worth a curve of its own; a CLS readout has none."""
+    pool = getattr(model, "pool", None)
+    return {"p": pool.p.item()} if pool is not None else {}
 
 
 def _with_heartbeat(log, path: Path):
@@ -445,7 +499,7 @@ def _resume(
     # saved epoch starts the patience clock fresh, which is the forgiving direction: a
     # resumed old run gets its full patience rather than stopping on its first epoch.
     best_epoch = int(payload.get("best_epoch", done))
-    log(f"resuming from epoch {done} (best mAP {best:.4f}, p {model.pool.p.item():.4f})")
+    log(f"resuming from epoch {done} (best mAP {best:.4f})")
     return done + 1, best, best_epoch
 
 
@@ -475,7 +529,7 @@ def _save(
         "state_dict": model.state_dict(),
         "meta": {
             "architecture": config.backbone,
-            "pooling": "gem",
+            "pooling": _pooling(model),
             "outputdim": model.dim,
             "whitening": False,
             "epoch": epoch,
