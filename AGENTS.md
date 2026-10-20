@@ -469,11 +469,21 @@ What `training/` needs to host it, generalized in place rather than duplicated:
 
 Order of work, cheapest first:
 
-1. `stretch` in the harness; frozen DeiT-S†/B† re-scored under it at 224 and 384 — the
-   "before" row in the protocol the "after" row will use.
-2. IRT_L on DeiT-S† 224, then DeiT-B† 384; then IRT_R with λ chosen on SfM validation.
+1. **Done.** `stretch` in the harness; frozen DeiT-S†/B† re-scored under it at 224 and
+   384 — the "before" row in the protocol the "after" row will use.
+2. **Done: IRT reproduces.** IRT_L trained here, 100 epochs, raw CLS: DeiT-S† 224 0.352 /
+   0.166 roxford, 0.666 / 0.424 rparis (Table 7: 34.5 / 15.8, 65.8 / 42.0); DeiT-B† 224
+   0.422 / 0.207, 0.674 / 0.430 (Table 7: 39.5 / 17.4, 67.5 / 43.6 — roxford ~3 above,
+   one seed, recorded as a gap). PCA-whitening on SfM lowers the trained rows. **B† 384
+   and IRT_R are deliberately not run**: both are DeiT, the best IRT row sits ~25 Medium
+   below frozen DINOv3-L, and the two rows above already settle the reproduction.
 3. The same recipe on DINOv2-S/B (full fine-tuning). It is justified only if it beats
-   the frozen DINOv2 row at the same protocol — if it does not, that is the finding.
+   the frozen DINOv2 row at the same protocol (`stretch`, re-measured) — if it does not,
+   that is the finding. `scripts/sfm_validation.py` gives each frozen model's SfM
+   validation mAP, i.e. how much of the training objective it already solves: DINOv2-S
+   0.858, B 0.887, L 0.905, DINOv3-L 0.928 — all above trained DeiT-B† (0.824). Frozen
+   `stretch` rows: DINOv2-S 0.596 / 0.387 roxford, 0.827 / 0.662 rparis; B 0.648 /
+   0.424, 0.888 / 0.759.
 4. **LoRA** on the same DINOv2-S/B, then on DINOv3-L, the tier's best frozen row. The
    question it answers is whether retrieval training adds anything *without* overwriting
    what 142M-image pretraining learned, and it is what makes ViT-L trainable at all on
