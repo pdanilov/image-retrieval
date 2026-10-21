@@ -808,6 +808,42 @@ SfM gain does not transfer to Oxford and Paris. The bigger model loses less. Ret
 training that rewrites every weight overwrites more of what 142M-image pretraining learned
 than SfM-120k can teach back — which is the case for LoRA, next.
 
+**LoRA does not rescue it.** Rank-8 adapters on the attention projections, pretrained
+weights frozen (`--lora-rank 8 --lr …`), 15 epochs per learning rate on DINOv2-S:
+
+| DINOv2-S/14, 224, `stretch` | best SfM val | ROxf M | ROxf H | RPar M | RPar H |
+|---|---:|---:|---:|---:|---:|
+| frozen | 0.857 | **0.596** | 0.387 | **0.827** | **0.662** |
+| LoRA, lr 1e-5 | 0.873 | 0.571 | 0.339 | 0.821 | 0.643 |
+| LoRA, lr 3e-5 | 0.875 | 0.566 | 0.383 | 0.795 | 0.605 |
+| LoRA, lr 1e-4 | 0.880 | 0.589 | **0.398** | 0.783 | 0.585 |
+| full fine-tuning | 0.888 | 0.575 | 0.375 | 0.793 | 0.599 |
+
+The further a run moves on SfM validation, the more it loses on rparis6k — monotonically,
+Hard 0.643 → 0.605 → 0.599 → 0.585. roxford5k is noisier, and its one cell above frozen
+(lr 1e-4, Hard +0.011) comes with Medium below it. Selecting the learning rate on SfM
+validation, as the protocol requires, picks 1e-4: the worst LoRA row on rparis6k. **For
+DINO, SfM validation points the wrong way.** All three rows are recorded, not just the
+selected one, because that is the finding.
+
+One short check on the tier's best model — DINOv3-L/16, LoRA rank 8, lr 1e-5 (the gentlest
+setting above, *not* selected on SfM), 15 epochs:
+
+| DINOv3-L/16, 224, `stretch` | ROxf M | ROxf H | RPar M | RPar H |
+|---|---:|---:|---:|---:|
+| frozen | 0.806 | 0.632 | 0.910 | 0.810 |
+| LoRA, best SfM epoch (2 of 15) | 0.811 | 0.636 | 0.912 | 0.815 |
+
+SfM validation peaked at epoch 2 (0.9279 → 0.9285) and fell every epoch after, so the kept
+checkpoint is two epochs from frozen, and its +0.002–0.005 is at the noise floor. The
+recipe has nothing to teach DINOv3-L that SfM itself rewards past the second epoch.
+
+**Conclusion for the trainable half: on this recipe and this data, retrieval training adds
+nothing to DINO** — full fine-tuning and LoRA alike, at every size tried. It lifts a
+supervised DeiT by 10+ points and reproduces IRT, but self-supervised pretraining already
+sits past where SfM-120k can take a network, and moving further toward SfM moves away from
+Oxford and Paris.
+
 Batching is what makes 100 epochs affordable: square inputs stack, so mining and
 validation run 64 images per forward and a tuple goes through as one, with JPEG decoding
 in DataLoader workers. An S† epoch takes ~125 s (B† ~175 s) instead of ~11 minutes, and

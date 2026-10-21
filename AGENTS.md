@@ -495,7 +495,15 @@ Order of work, cheapest first:
    config and chosen on SfM validation; adapters are merged into the weights after
    training (`peft`'s `merge_and_unload`), so the checkpoint is a plain model and the
    evaluation path does not change. Implemented: `cbir train --lora-rank R --lr X`
-   (adapters on q/k/v/o; `lr` is required, there is no published value).
+   (adapters on q/k/v/o; `lr` is required, there is no published value). **Done — it
+   does not beat frozen either.** DINOv2-S, rank 8, lr 1e-5 / 3e-5 / 1e-4: the higher the
+   SfM validation, the lower rparis6k (Hard 0.643 / 0.605 / 0.585 vs frozen 0.662), so
+   SfM validation selects the worst setting. DINOv3-L, rank 8, lr 1e-5 (not SfM-selected):
+   SfM peaks at epoch 2 and falls after; benchmark +0.002–0.005, noise floor.
+
+**Status: the trainable half is closed with a negative result** — retrieval training on
+SfM-120k adds nothing to DINO. Reopening it needs a different training signal (data or
+objective), not another schedule on this one.
 
 Whether full fine-tuning of ViT-L fits 16 GB is unmeasured — about 5 GB of weights,
 gradients and Adam state in fp32 plus activations, so possibly with bf16. Measure before
