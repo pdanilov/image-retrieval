@@ -599,8 +599,8 @@ tier.
 
 ![Every frozen transformer at the protocol, coloured by pretraining objective, against the best classic and fine-tuned CNN rows](docs/transformer_models.png)
 
-Figures in this section and the next come from `notebooks/05_transformer_comparison.ipynb`
-and `notebooks/06_transformer_training.ipynb`.
+Figures in this section and the next come from `notebooks/05_transformers_comparison.ipynb`
+and `notebooks/06_transformers_training.ipynb`.
 
 ```
 uv run cbir evaluate --dataset roxford5k vit --model dinov3-vitl16
