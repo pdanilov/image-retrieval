@@ -109,6 +109,7 @@ def test_the_network_receives_the_configured_model_and_size(wired):
         "interpolation": "bilinear",
         "readout": "native",
         "p": None,
+        "checkpoint": None,
     }
 
 
@@ -125,5 +126,6 @@ def test_params_record_every_knob_and_nothing_else():
         "whiten_source": "held_out",
         "shrinkage": 0.0,
         "seed": 0,
+        "checkpoint": None,
     }
     assert ViTConfig.technique == "vit"

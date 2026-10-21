@@ -45,6 +45,32 @@ and what vgg16 falls back to, since no vgg16 command was ever published. Recorde
 rather than passed in so a run cannot silently use the wrong one for its backbone."""
 
 
+VIT_MARGIN = 0.85
+"""IRT's margin for every transformer it fine-tunes (§4.2: "the default hyper-parameters
+of Radenović et al."), the same value as resnet101's."""
+
+KOLEO_EPS = 1e-8
+"""Floor inside the log. A query and a near-duplicate positive sit at distance ~0, and
+`-log 0` would be an infinite loss rather than a large one."""
+
+
+def koleo(descriptors: torch.Tensor) -> torch.Tensor:
+    """Kozachenko-Leonenko differential-entropy term, IRT_R's regularizer.
+
+    `-(1/N) sum_i log min_{j != i} ||z_i - z_j||` over the `(N, D)` unit vectors given:
+    it rewards every descriptor for being far from its nearest neighbour, spreading the
+    set over the sphere. IRT adds it to the contrastive loss as `L + lambda * L_KoLeo`,
+    over the descriptors that loss sees — here one tuple's query, positive and negatives.
+    """
+    if descriptors.ndim != 2 or len(descriptors) < 2:
+        raise ValueError(f"need (N >= 2, D) descriptors for a nearest neighbour, got {tuple(descriptors.shape)}")
+    distances = torch.cdist(descriptors, descriptors)
+    # A point is not its own neighbour: mask the diagonal with +inf before the min.
+    distances = distances + torch.diag(torch.full((len(descriptors),), float("inf"), device=descriptors.device))
+    nearest = distances.min(dim=1).values
+    return -torch.log(nearest + KOLEO_EPS).mean()
+
+
 class SquaredContrastiveLoss(losses.ContrastiveLoss):
     """PML's contrastive loss with the reference's squared hinge and summed reduction.
 

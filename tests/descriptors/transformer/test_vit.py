@@ -115,6 +115,27 @@ def test_crop_is_dinov2s_eval_transform_and_cuts_the_edges():
     assert float(green.min()) == pytest.approx(_normalized(1.0, channel=1), abs=1e-4)
 
 
+def test_stretch_fills_the_square_without_cutting_or_padding():
+    # IRT's protocol: a 2:1 image is squashed to 224 x 224. The red left border survives
+    # (nothing cut, unlike `crop`) and the top and bottom rows are image, not black bars
+    # (nothing padded, unlike `pad`).
+    image = Image.new("RGB", (400, 200), "white")
+    for y in range(200):
+        for x in range(40):
+            image.putpixel((x, y), (255, 0, 0))
+
+    tensor = _vit(resize="stretch").preprocess(image)
+
+    assert tensor.shape == (3, IMAGE_SIZE, IMAGE_SIZE)
+    green = tensor[1]
+    assert float(green[IMAGE_SIZE // 2, 0]) == pytest.approx(_normalized(0.0, channel=1), abs=1e-4)
+    assert float(green[0, IMAGE_SIZE // 2]) == pytest.approx(_normalized(1.0, channel=1), abs=1e-4)
+    assert float(green[IMAGE_SIZE - 1, IMAGE_SIZE // 2]) == pytest.approx(_normalized(1.0, channel=1), abs=1e-4)
+    # The border's 40 of 400 columns become 22 of 224: squeezed horizontally, kept whole.
+    red_columns = int((green[IMAGE_SIZE // 2] < _normalized(0.5, channel=1)).sum())
+    assert red_columns == pytest.approx(22.4, abs=1.5)
+
+
 def test_bilinear_and_bicubic_differ():
     image = _images(1, size=(97, 61))[0]
     bicubic = _vit().preprocess(image)
@@ -124,7 +145,7 @@ def test_bilinear_and_bicubic_differ():
 
 def test_unknown_resize_is_rejected_before_loading():
     with pytest.raises(ValueError, match="unknown resize"):
-        FrozenViT(SMALL, resize="stretch", device="cpu")  # type: ignore[arg-type]
+        FrozenViT(SMALL, resize="squash", device="cpu")  # type: ignore[arg-type]
 
 
 def test_aspect_mode_batches_mixed_shapes_without_reordering():

@@ -15,6 +15,7 @@ from cbir.configs.run import DescriptorConfig, RunConfig
 from cbir.configs.transformer import ViTConfig
 from cbir.data.holdout import EvalDataset
 from cbir.data.revisitop import SUPPORTED, download
+from cbir.descriptors.transformer.vit import Model as ViTModel
 from cbir.eval.metrics import Protocol
 from cbir.eval.results import RunRecord, format_param, latest, load
 
@@ -213,17 +214,21 @@ def evaluate_cmd(
 
 
 def train_cmd(
-    backbone: Literal["vgg16", "resnet101", "resnet50"] = "vgg16",
+    backbone: Literal["vgg16", "resnet101", "resnet50"] | ViTModel = "vgg16",
     weights: Literal["caffe", "torchvision"] = "caffe",
     epochs: int = 30,
-    lr: float = 5e-7,
+    lr: float | None = None,
     margin: float | None = None,
     query_size: int = 2000,
     pool_size: int = 22000,
-    image_size: int = 362,
+    image_size: int | None = None,
     seed: int = 0,
-    whiten: bool = True,
+    whiten: bool | None = None,
     whiten_pairs: int = 20000,
+    entropy_weight: float = 0.0,
+    lora_rank: int | None = None,
+    lora_alpha: float | None = None,
+    workers: int = 8,
     patience: int | None = 5,
     min_delta: float = 0.001,
     resume: bool = True,
@@ -240,23 +245,36 @@ def train_cmd(
     default sizes. The corpus is a manual download — see `descriptors/cnn/sfm.py`.
 
     Args:
-        backbone: Architecture to fine-tune.
+        backbone: Architecture to fine-tune. A transformer name trains IRT's network
+            instead: the same recipe, CLS readout, inputs squashed into a square.
         weights: Which ImageNet weights to start from. The reference initializes from
             its Caffe-converted ones and the published numbers were reached that way, so
             that is the default; `torchvision` is the ablation. A manual download.
         epochs: Passes over the sampled tuples.
-        lr: Adam learning rate. The published value is 5e-7 and is calibrated to a
-            summed loss; raising it without also changing the reduction diverges.
+        lr: Adam learning rate. Defaults to the published 5e-7, which is calibrated to a
+            summed loss; raising it without also changing the reduction diverges. Required
+            with LoRA, which has no published value.
         margin: Contrastive hinge width. Defaults to the published value for the
-            backbone — 0.85 for resnet101, 0.7 for vgg16.
+            backbone — 0.85 for resnet101 and every transformer, 0.7 for vgg16.
         query_size: Tuples sampled per epoch.
         pool_size: Images descriptors are extracted for, to mine negatives from.
-        image_size: Longest side during training. Evaluation still runs at 1024.
+        image_size: Longest side during training — 362 by default, and evaluation still
+            runs at 1024. For a transformer, the square's side; defaults to the
+            checkpoint's native size, which DeiT requires.
         seed: Seeds sampling and initialization.
         whiten: Fit the supervised projection onto `best.pth` when training ends, which
             is what makes the checkpoint complete — see `cbir whiten`. Turning it off
             leaves a network that has to be evaluated against held-out PCA instead.
+            Defaults on for a CNN; off, and unavailable, for a transformer, which IRT
+            reduces with PCA on SfM at evaluation.
         whiten_pairs: Matching pairs the projection is fitted on.
+        entropy_weight: IRT_R's lambda on the KoLeo differential-entropy term. 0 is
+            plain contrastive training (IRT_L).
+        lora_rank: Train a transformer through rank-`r` LoRA adapters on its attention
+            projections, pretrained weights frozen, instead of every weight. The saved
+            `best.pth` has the update merged, so `cbir evaluate` reads it as any other.
+        lora_alpha: LoRA's scale numerator; defaults to the rank (a scale of 1).
+        workers: DataLoader processes decoding images. Speed only; the order is fixed.
         patience: Stop after this many epochs with no validation-mAP gain larger than
             `min_delta`. `None` runs the full schedule, as the reference does.
         min_delta: How much an epoch must beat the running best by to count as progress.
@@ -281,6 +299,10 @@ def train_cmd(
         seed=seed,
         whiten=whiten,
         whiten_pairs=whiten_pairs,
+        entropy_weight=entropy_weight,
+        lora_rank=lora_rank,
+        lora_alpha=lora_alpha,
+        workers=workers,
         patience=patience,
         min_delta=min_delta,
         resume=resume,

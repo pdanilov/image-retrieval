@@ -39,6 +39,8 @@ class ViTConfig:
         resize: How an image is fitted to `image_size`. `pad` is the documented
             protocol; `aspect` and `crop` were ruled out as the reason the DINOv2
             paper's table does not reproduce — see `descriptors/transformer/vit.py`.
+            `stretch` squashes to the square, IRT's protocol for its rows and for the
+            frozen DeiT rows they are compared with.
         interpolation: Resampling filter. The papers name none; bicubic is what
             DINOv2's own evaluation transforms use.
         readout: Which vector becomes the descriptor. `native` is the family's own
@@ -58,6 +60,9 @@ class ViTConfig:
         shrinkage: Floors whitening's divisor at `sqrt(lambda + eps)`, `eps` being this
             fraction of the mean eigenvalue; see `PCACompression.fit`.
         seed: Seeds PCA's randomized solver, so a refit reproduces.
+        checkpoint: A `best.pth` written by `cbir train` for `model`, read out in place
+            of the pretrained weights. Recorded by path, as the CNN tier records its
+            fine-tuned checkpoints.
     """
 
     model: Model = "dinov2-vitl14"
@@ -71,6 +76,7 @@ class ViTConfig:
     whiten_source: WhitenSource = "held_out"
     shrinkage: float = 0.0
     seed: int = 0
+    checkpoint: str | None = None
 
     technique: ClassVar[str] = "vit"
     inputs_kind: ClassVar[str] = "images"
@@ -100,6 +106,7 @@ class ViTConfig:
             interpolation=self.interpolation,
             readout=self.readout,
             p=self.p,
+            checkpoint=self.checkpoint,
         )
 
         database_vectors = model.extract(iter_images(inputs.database_paths))

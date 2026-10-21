@@ -1,6 +1,49 @@
 # image-retrieval
 Modern image retrieval inspired by 10-year old bachelor's diploma nostalgia
 
+## Results at a glance
+
+Three eras of content-based image retrieval in one harness: the same benchmark, the same
+protocol (bbx-cropped queries, exact search, revisitop's Medium and Hard), every row
+reproducible from `results/runs.jsonl`. roxford5k mAP — the one dataset every tier was
+run on; the transformer tier also has rparis6k, in its own section.
+
+| era | method | trained for retrieval | Medium | Hard |
+|---|---|---|---:|---:|
+| classic | RootSIFT BoW, k = 50000 | — | 0.226 | 0.087 |
+| classic | RootSIFT Fisher vectors, k = 256 | — | 0.274 | 0.144 |
+| classic | RootSIFT VLAD, k = 4096 | — | 0.385 | 0.195 |
+| CNN | Neural Codes, VGG16 fc6 | no | 0.163 | 0.051 |
+| CNN | R-MAC, ResNet101, whitened | no | 0.465 | 0.142 |
+| CNN | GeM `p = 3`, ResNet101, whitened | no | 0.461 | 0.186 |
+| CNN | GeM ResNet101, trained here (19 epochs) | yes | 0.636 | 0.372 |
+| CNN | GeM ResNet101, Radenović et al.'s checkpoint | yes | 0.654 | 0.404 |
+| transformer | DeiT-B/16† 224 (supervised), frozen, `stretch` | no | 0.291 | 0.091 |
+| transformer | DeiT-B/16† 224, IRT recipe, trained here | yes | 0.422 | 0.207 |
+| transformer | SigLIP 2 ViT-L/16 512 (image-text), whitened | no | 0.432 | 0.189 |
+| transformer | DINOv2 ViT-L/14 224 (self-supervised) | no | 0.729 | 0.528 |
+| transformer | DINOv3 ViT-L/16 224 (self-supervised) | no | **0.810** | **0.637** |
+| transformer | DINOv3 ViT-L/16 224, LoRA on SfM, trained here | yes | 0.811 | 0.636 |
+
+What the table says:
+
+- **Each era beats the last, but not uniformly.** VLAD, the best classic row, draws level
+  with the best frozen ImageNet CNN on Hard (0.195 against 0.192) and beats Neural Codes
+  on both; it is retrieval *training* that lifts the CNN tier clear.
+- **Pretraining overtook retrieval training.** A frozen self-supervised DINOv3 beats the
+  CNN fine-tuned for this exact task by 0.156 Medium and 0.233 Hard.
+- **The objective matters more than the architecture.** DeiT, SigLIP 2 and DINO are all
+  ViTs: a supervised classifier lands below VLAD, an image-text model level with the
+  frozen CNNs, a self-supervised one far above everything.
+- **Retrieval training helps where pretraining left room, and only there.** The same
+  SfM-120k recipe lifts DeiT by 13 Medium (reproducing IRT) and adds nothing to DINO —
+  full fine-tuning lowers DINOv2-S/B, LoRA leaves DINOv3-L at its frozen score.
+
+The harness is validated against published numbers before any of this is trusted:
+Radenović et al.'s GeM checkpoints, the DINOv3 paper's ViT-L/16 row (63.1 Hard published,
+0.637 here) and IRT's Table 7. Where a paper does not reproduce, the section says why
+(DINOv2's Table 9 uses uncropped queries).
+
 ## Setup
 
 ```
@@ -554,6 +597,11 @@ documents (App. D.8): the longer side resized to 224, the image centred on a bla
 each family normalized as it was trained. Queries are bbx-cropped, as for every other
 tier.
 
+![Every frozen transformer at the protocol, coloured by pretraining objective, against the best classic and fine-tuned CNN rows](docs/transformer_models.png)
+
+Figures in this section and the next come from `notebooks/05_transformers_comparison.ipynb`
+and `notebooks/06_transformers_training.ipynb`.
+
 ```
 uv run cbir evaluate --dataset roxford5k vit --model dinov3-vitl16
 uv run cbir evaluate --dataset roxford5k vit --model dinov2-vitl14 --image-size 448
@@ -599,6 +647,7 @@ Against the other tiers, on roxford5k Medium / Hard:
 | fine-tuned CNN | ResNet101 GeM, Radenović et al.'s published checkpoint | 0.654 | 0.404 |
 | fine-tuned CNN | ResNet101 GeM, trained here (19 epochs) | 0.636 | 0.372 |
 | frozen supervised ViT | DeiT-B/16†, 384 px | 0.301 | 0.085 |
+| fine-tuned ViT | DeiT-B/16†, 224 px, IRT recipe, trained here (stretch) | 0.422 | 0.207 |
 | frozen vision-language | SigLIP 2 ViT-L/16, 512 px, whitened | 0.432 | 0.189 |
 | frozen self-supervised | DINOv3 ViT-L/16, 224 px | **0.810** | **0.637** |
 
@@ -627,6 +676,8 @@ theirs. Between that protocol and this one it moves 0.102 roxford5k Medium, agai
 0.110 for DINOv2-S under the same comparison — the crop's toll on a small model again.
 
 ### Resolution
+
+![roxford5k mAP against input size for the DINO models](docs/transformer_resolution.png)
 
 224 px is low for a landmark that fills part of a 1024-px photograph, so the DINO and
 SigLIP 2 models were also run larger (DeiT's two sizes are in the table above). SigLIP 2 ships one checkpoint per resolution, so its rows are three
@@ -670,6 +721,8 @@ descriptors whose dimensions share structure, and an image-text embedding is dom
 broad semantic directions. DeiT does not move.
 
 ### CLS against pooled patch tokens
+
+![Whitening and readout ablations on roxford5k Medium](docs/transformer_ablations.png)
 
 The patch grid is a transformer's counterpart of a conv map, so the CNN tier's pooling
 applies to it directly: `--readout mean` averages the patch tokens (SPoC over tokens),
@@ -716,3 +769,140 @@ writes nothing to `results/` — and lands within 0.1–1.6 mAP of Table 9 for V
 on both datasets, which is what pins the difference on the protocol rather than on this
 implementation. Changing padding, interpolation or the centre-crop transform did not
 close the gap (those runs are recorded, `--resize aspect|crop`, `--interpolation`).
+
+### Training a transformer here (IRT)
+
+The trainable half starts with IRT (El-Nouby et al. 2021,
+[2102.05644](https://arxiv.org/abs/2102.05644)): the GeM recipe above with the backbone
+swapped — DeiT for ResNet, CLS for GeM, the same SfM-120k tuples, contrastive loss and
+optimizer, margin 0.85, 100 epochs. `cbir train` runs it for any CLS model:
+
+```
+uv run cbir train --backbone deit-vits16-dist-224 --epochs 100 --patience None
+uv run cbir evaluate --dataset roxford5k vit --model deit-vits16-dist-224 --resize stretch \
+    --checkpoint data/runs/deit-vits16-dist-224-cls-margin0.85-lr5e-07-seed0/best.pth
+```
+
+IRT squashes every image, training and evaluation alike, "into a square image" — aspect
+ratio discarded, no bars. That is `--resize stretch`, a different geometry from the
+padded protocol above, so the "before" rows are re-measured under it: frozen DeiT-B† 384
+scores 0.349 Medium here against 0.301 padded. Comparing a trained row to the padded one
+would credit training with five points the geometry earned.
+
+| DeiT†, CLS, `stretch` | ROxf M | ROxf H | RPar M | RPar H |
+|---|---:|---:|---:|---:|
+| S† 224, frozen | 0.243 | 0.090 | 0.598 | 0.333 |
+| **S† 224, trained here** | **0.352** | **0.166** | **0.666** | **0.424** |
+| S† 224, IRT Table 7 | 34.5 | 15.8 | 65.8 | 42.0 |
+| B† 224, frozen | 0.291 | 0.091 | 0.647 | 0.386 |
+| **B† 224, trained here** | **0.422** | **0.207** | **0.674** | **0.430** |
+| B† 224, IRT Table 7 | 39.5 | 17.4 | 67.5 | 43.6 |
+
+![Every trained configuration before and after training, with IRT's Table 7 marked](docs/transformer_training.png)
+
+**IRT reproduces.** S† lands within 0.8 of the paper on all four numbers, and B† within
+0.6 on rparis6k. B† is 2.7 / 3.3 *above* the paper on roxford5k: larger than S†'s gaps,
+but in the direction a harness bug rarely produces, from the same code that matched
+everywhere else, on a 70-query benchmark from one seed each side. Recorded as a gap, not
+attributed; a second seed would say whether it is noise.
+
+Training lifts roxford5k by 11–13 Medium and rparis6k by 3–7, and neither run had
+finished improving: validation mAP on SfM rose for all 100 epochs (S† 0.643 → 0.802, B†
+0.702 → 0.824), flattening only at the end. Early stopping is off for these runs, which
+is what the ResNet101 run above argues for.
+
+PCA-whitening fitted on SfM-120k *lowers* the trained S† (roxford5k 0.338 / 0.134,
+rparis6k 0.643 / 0.402), so the rows are raw CLS. The paper uses PCA only to reduce to
+128 dimensions.
+
+Not run: B† 384 (IRT's headline row, 50.5 / 22.7) and IRT_R's entropy regularizer. Both
+are DeiT, and the best IRT row still sits ~25 Medium below frozen DINOv3-L — the
+reproduction is settled by the two rows above, and the open question is DINO's.
+
+**Next: the same recipe on DINOv2.** Two measurements set it up. First, the "before"
+rows under `stretch` — which, as for DeiT, scores slightly above the padded protocol:
+
+| frozen, CLS, 224 | ROxf M | ROxf H | RPar M | RPar H |
+|---|---:|---:|---:|---:|
+| DINOv2-S/14, `stretch` | 0.596 | 0.387 | 0.827 | 0.662 |
+| DINOv2-S/14, `pad` | 0.577 | 0.354 | 0.816 | 0.648 |
+| DINOv2-B/14, `stretch` | 0.648 | 0.424 | 0.888 | 0.759 |
+| DINOv2-B/14, `pad` | 0.641 | 0.417 | 0.884 | 0.751 |
+
+Second, how much of the training objective each frozen model already solves — mAP on the
+SfM validation split, the number every training run logs as epoch 0
+(`scripts/sfm_validation.py`):
+
+| model | SfM val mAP |
+|---|---:|
+| DeiT-S† 224, frozen → trained here | 0.643 → 0.802 |
+| DeiT-B† 224, frozen → trained here | 0.702 → 0.824 |
+| DINOv2-S/14, frozen | 0.858 |
+| DINOv2-B/14, frozen | 0.887 |
+| DINOv2-L/14, frozen | 0.905 |
+| DINOv3-L/16, frozen | 0.928 |
+
+Frozen DINOv2-S already starts above where 100 epochs of IRT leave DeiT-B†. The recipe has
+far less room on DINO than it had on DeiT — and what room there is does not reach the
+benchmark. **Full fine-tuning makes DINOv2 worse:**
+
+| DINOv2, CLS, 224, `stretch` | ROxf M | ROxf H | RPar M | RPar H |
+|---|---:|---:|---:|---:|
+| S/14 frozen | 0.596 | 0.387 | 0.827 | 0.662 |
+| S/14 IRT recipe, trained here (best epoch 38) | 0.575 | 0.375 | 0.793 | 0.599 |
+| | −0.021 | −0.012 | −0.034 | −0.064 |
+| B/14 frozen | 0.648 | 0.424 | 0.888 | 0.759 |
+| B/14 IRT recipe, trained here (best epoch 48) | 0.640 | 0.405 | 0.874 | 0.742 |
+| | −0.008 | −0.019 | −0.015 | −0.017 |
+
+SfM validation peaked early (S 0.857 → 0.888 at epoch 38, B 0.887 → 0.909 at epoch 48) and
+then slid while the training loss kept falling — the network fitting SfM's tuples — and
+`best.pth` is the validation peak, so these rows are the recipe at its best. Even so, the
+SfM gain does not transfer to Oxford and Paris. The bigger model loses less. Retrieval
+training that rewrites every weight overwrites more of what 142M-image pretraining learned
+than SfM-120k can teach back — which is the case for LoRA, next.
+
+**LoRA does not rescue it.** Rank-8 adapters on the attention projections, pretrained
+weights frozen (`--lora-rank 8 --lr …`), 15 epochs per learning rate on DINOv2-S:
+
+| DINOv2-S/14, 224, `stretch` | best SfM val | ROxf M | ROxf H | RPar M | RPar H |
+|---|---:|---:|---:|---:|---:|
+| frozen | 0.857 | **0.596** | 0.387 | **0.827** | **0.662** |
+| LoRA, lr 1e-5 | 0.873 | 0.571 | 0.339 | 0.821 | 0.643 |
+| LoRA, lr 3e-5 | 0.875 | 0.566 | 0.383 | 0.795 | 0.605 |
+| LoRA, lr 1e-4 | 0.880 | 0.589 | **0.398** | 0.783 | 0.585 |
+| full fine-tuning | 0.888 | 0.575 | 0.375 | 0.793 | 0.599 |
+
+Every run gains on SfM validation and loses on rparis6k. Across the three LoRA learning
+rates the bigger SfM gain is the bigger loss (Hard 0.643 → 0.605 → 0.585); full
+fine-tuning gains most on SfM without losing most, so the ordering holds within LoRA, not
+across methods. roxford5k is noisier, and its one cell above frozen (lr 1e-4, Hard
++0.011) comes with Medium below it.
+
+![SfM validation gain against the rparis6k change for DINOv2-S](docs/transformer_sfm_vs_benchmark.png) Selecting the learning rate on SfM
+validation, as the protocol requires, picks 1e-4: the worst LoRA row on rparis6k. **For
+DINO, SfM validation points the wrong way.** All three rows are recorded, not just the
+selected one, because that is the finding.
+
+One short check on the tier's best model — DINOv3-L/16, LoRA rank 8, lr 1e-5 (the gentlest
+setting above, *not* selected on SfM), 15 epochs:
+
+| DINOv3-L/16, 224, `stretch` | ROxf M | ROxf H | RPar M | RPar H |
+|---|---:|---:|---:|---:|
+| frozen | 0.806 | 0.632 | 0.910 | 0.810 |
+| LoRA, best SfM epoch (2 of 15) | 0.811 | 0.636 | 0.912 | 0.815 |
+
+SfM validation peaked at epoch 2 (0.9279 → 0.9285) and fell every epoch after, so the kept
+checkpoint is two epochs from frozen, and its +0.002–0.005 is at the noise floor. The
+recipe has nothing to teach DINOv3-L that SfM itself rewards past the second epoch.
+
+**Conclusion for the trainable half: on this recipe and this data, retrieval training adds
+nothing to DINO** — full fine-tuning and LoRA alike, at every size tried. It lifts a
+supervised DeiT by 10+ points and reproduces IRT, but self-supervised pretraining already
+sits past where SfM-120k can take a network, and moving further toward SfM moves away from
+Oxford and Paris.
+
+Batching is what makes 100 epochs affordable: square inputs stack, so mining and
+validation run 64 images per forward and a tuple goes through as one, with JPEG decoding
+in DataLoader workers. An S† epoch takes ~125 s (B† ~175 s) instead of ~11 minutes, and
+tests pin that the descriptors and the loss are the ones one-image-per-forward gives.
