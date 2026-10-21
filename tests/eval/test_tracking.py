@@ -134,3 +134,32 @@ def test_replay_reports_zero_without_trackio(monkeypatch):
 def test_replay_of_nothing_is_not_an_error(fake_trackio):
     assert replay([]) == 0
     assert fake_trackio.calls == []
+
+
+def test_a_missing_trackio_is_silent(monkeypatch, recwarn):
+    import sys
+
+    from cbir.eval.tracking import load_trackio
+
+    monkeypatch.setitem(sys.modules, "trackio", None)  # what an absent package raises
+    assert load_trackio() is None
+    assert not recwarn
+
+
+def test_a_broken_trackio_warns_instead_of_passing_for_missing(monkeypatch):
+    # trackio 0.34 against huggingface_hub 1.33 raised ImportError from inside trackio;
+    # treated as "not installed", it silently dropped every training curve.
+    import builtins
+
+    from cbir.eval.tracking import load_trackio
+
+    real = builtins.__import__
+
+    def broken(name, *args, **kwargs):
+        if name == "trackio":
+            raise ImportError("cannot import name 'CommitOperationAdd' from 'huggingface_hub.hf_api'")
+        return real(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", broken)
+    with pytest.warns(UserWarning, match="failed to import"):
+        assert load_trackio() is None

@@ -3349,11 +3349,12 @@ wheels = [
 
 [[package]]
 name = "trackio"
-version = "0.34.0"
+version = "0.43.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "brotli" },
     { name = "gradio-client" },
+    { name = "httpx" },
     { name = "huggingface-hub" },
     { name = "numpy" },
     { name = "orjson" },
@@ -3363,7 +3364,7 @@ dependencies = [
     { name = "uvicorn", extra = ["standard"] },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a6/5c/181cd78854c5b8e7bed06654a34a4c720c2dccfc5a43e2bd57e5c0ec42e3/trackio-0.34.0-py3-none-any.whl", hash = "sha256:b92674b6ffdf756a1a5b562616e53ead0ad4b716dc3c37302c377552769c9c22", size = 1999006, upload-time = "2026-07-29T22:27:17.653Z" },
+    { url = "https://files.pythonhosted.org/packages/61/bc/c72d4ded898a3055ba5ade531c8954b8b7df93b1a7bdae257bebe2b64273/trackio-0.43.0-py3-none-any.whl", hash = "sha256:65d56b3d7b9d212ba81fb2abc6499e8183745a062eda5ca141eefb52c5b0f298", size = 3106540, upload-time = "2026-10-20T17:12:22.836Z" },
 ]
 
 [[package]]

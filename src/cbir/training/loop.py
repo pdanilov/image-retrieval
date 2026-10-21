@@ -296,9 +296,10 @@ def _track(
     hypothetical: resnet101 diverged, was fixed and restarted, and the retry appended
     onto the collapse it was meant to replace.
     """
-    try:
-        import trackio
-    except ImportError:
+    from cbir.eval.tracking import load_trackio
+
+    trackio = load_trackio()
+    if trackio is None:
         return
     try:
         if name is not None and config is not None:

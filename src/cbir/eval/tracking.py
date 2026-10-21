@@ -10,12 +10,35 @@ evaluation that produced it can cost an hour.
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Iterable
+from types import ModuleType
 from typing import Any
 
 from cbir.eval.results import RunRecord, format_param
 
 PROJECT = "cbir"
+
+
+def load_trackio() -> ModuleType | None:
+    """trackio if it imports, else `None` — silently only when it is not installed.
+
+    "Not installed" is the case the optional dependency exists for. A trackio that is
+    installed but fails to import (a version clash with `huggingface_hub` did exactly
+    this) is a broken install, and swallowing it like a missing one meant whole training
+    runs logged nothing with no sign of it. So that case still returns `None` — tracking
+    must never cost a run — but says so.
+    """
+    try:
+        import trackio
+    except ModuleNotFoundError as error:
+        if error.name != "trackio":
+            warnings.warn(f"trackio is installed but failed to import, so nothing is tracked: {error}", stacklevel=2)
+        return None
+    except ImportError as error:
+        warnings.warn(f"trackio is installed but failed to import, so nothing is tracked: {error}", stacklevel=2)
+        return None
+    return trackio
 
 
 def flatten_metrics(record: RunRecord) -> dict[str, float]:
@@ -53,9 +76,8 @@ def config_of(record: RunRecord) -> dict[str, Any]:
 
 def track(record: RunRecord) -> None:
     """Mirror one finished run into trackio, or do nothing if it isn't installed."""
-    try:
-        import trackio
-    except ImportError:
+    trackio = load_trackio()
+    if trackio is None:
         return
 
     trackio.init(project=PROJECT, name=run_name(record), config=config_of(record))
@@ -77,9 +99,7 @@ def replay(records: Iterable[RunRecord]) -> int:
     runs are all dated now. The real timings live in the record's `recorded_at` and
     `seconds`, which is where they belong.
     """
-    try:
-        import trackio  # noqa: F401
-    except ImportError:
+    if load_trackio() is None:
         return 0
     count = 0
     for record in records:
