@@ -1,6 +1,49 @@
 # image-retrieval
 Modern image retrieval inspired by 10-year old bachelor's diploma nostalgia
 
+## Results at a glance
+
+Three eras of content-based image retrieval in one harness: the same benchmark, the same
+protocol (bbx-cropped queries, exact search, revisitop's Medium and Hard), every row
+reproducible from `results/runs.jsonl`. roxford5k mAP — the one dataset every tier was
+run on; the transformer tier also has rparis6k, in its own section.
+
+| era | method | trained for retrieval | Medium | Hard |
+|---|---|---|---:|---:|
+| classic | RootSIFT BoW, k = 50000 | — | 0.226 | 0.087 |
+| classic | RootSIFT Fisher vectors, k = 256 | — | 0.274 | 0.144 |
+| classic | RootSIFT VLAD, k = 4096 | — | 0.385 | 0.195 |
+| CNN | Neural Codes, VGG16 fc6 | no | 0.163 | 0.051 |
+| CNN | R-MAC, ResNet101, whitened | no | 0.465 | 0.142 |
+| CNN | GeM `p = 3`, ResNet101, whitened | no | 0.461 | 0.186 |
+| CNN | GeM ResNet101, trained here (19 epochs) | yes | 0.636 | 0.372 |
+| CNN | GeM ResNet101, Radenović et al.'s checkpoint | yes | 0.654 | 0.404 |
+| transformer | DeiT-B/16† 224 (supervised), frozen, `stretch` | no | 0.291 | 0.091 |
+| transformer | DeiT-B/16† 224, IRT recipe, trained here | yes | 0.422 | 0.207 |
+| transformer | SigLIP 2 ViT-L/16 512 (image-text), whitened | no | 0.432 | 0.189 |
+| transformer | DINOv2 ViT-L/14 224 (self-supervised) | no | 0.729 | 0.528 |
+| transformer | DINOv3 ViT-L/16 224 (self-supervised) | no | **0.810** | **0.637** |
+| transformer | DINOv3 ViT-L/16 224, LoRA on SfM, trained here | yes | 0.811 | 0.636 |
+
+What the table says:
+
+- **Each era beats the last, but not uniformly.** VLAD, the best classic row, draws level
+  with the best frozen ImageNet CNN on Hard (0.195 against 0.192) and beats Neural Codes
+  on both; it is retrieval *training* that lifts the CNN tier clear.
+- **Pretraining overtook retrieval training.** A frozen self-supervised DINOv3 beats the
+  CNN fine-tuned for this exact task by 0.156 Medium and 0.233 Hard.
+- **The objective matters more than the architecture.** DeiT, SigLIP 2 and DINO are all
+  ViTs: a supervised classifier lands below VLAD, an image-text model level with the
+  frozen CNNs, a self-supervised one far above everything.
+- **Retrieval training helps where pretraining left room, and only there.** The same
+  SfM-120k recipe lifts DeiT by 13 Medium (reproducing IRT) and adds nothing to DINO —
+  full fine-tuning lowers DINOv2-S/B, LoRA leaves DINOv3-L at its frozen score.
+
+The harness is validated against published numbers before any of this is trusted:
+Radenović et al.'s GeM checkpoints, the DINOv3 paper's ViT-L/16 row (63.1 Hard published,
+0.637 here) and IRT's Table 7. Where a paper does not reproduce, the section says why
+(DINOv2's Table 9 uses uncropped queries).
+
 ## Setup
 
 ```
