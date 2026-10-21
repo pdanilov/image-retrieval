@@ -789,8 +789,24 @@ SfM validation split, the number every training run logs as epoch 0
 | DINOv3-L/16, frozen | 0.928 |
 
 Frozen DINOv2-S already starts above where 100 epochs of IRT leave DeiT-B†. The recipe has
-far less room on DINO than it had on DeiT; whether what is left translates into roxford5k
-and rparis6k is what the DINOv2 runs measure.
+far less room on DINO than it had on DeiT — and what room there is does not reach the
+benchmark. **Full fine-tuning makes DINOv2 worse:**
+
+| DINOv2, CLS, 224, `stretch` | ROxf M | ROxf H | RPar M | RPar H |
+|---|---:|---:|---:|---:|
+| S/14 frozen | 0.596 | 0.387 | 0.827 | 0.662 |
+| S/14 IRT recipe, trained here (best epoch 38) | 0.575 | 0.375 | 0.793 | 0.599 |
+| | −0.021 | −0.012 | −0.034 | −0.064 |
+| B/14 frozen | 0.648 | 0.424 | 0.888 | 0.759 |
+| B/14 IRT recipe, trained here (best epoch 48) | 0.640 | 0.405 | 0.874 | 0.742 |
+| | −0.008 | −0.019 | −0.015 | −0.017 |
+
+SfM validation peaked early (S 0.857 → 0.888 at epoch 38, B 0.887 → 0.909 at epoch 48) and
+then slid while the training loss kept falling — the network fitting SfM's tuples — and
+`best.pth` is the validation peak, so these rows are the recipe at its best. Even so, the
+SfM gain does not transfer to Oxford and Paris. The bigger model loses less. Retrieval
+training that rewrites every weight overwrites more of what 142M-image pretraining learned
+than SfM-120k can teach back — which is the case for LoRA, next.
 
 Batching is what makes 100 epochs affordable: square inputs stack, so mining and
 validation run 64 images per forward and a tuple goes through as one, with JPEG decoding

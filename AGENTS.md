@@ -483,7 +483,9 @@ Order of work, cheapest first:
    validation mAP, i.e. how much of the training objective it already solves: DINOv2-S
    0.858, B 0.887, L 0.905, DINOv3-L 0.928 — all above trained DeiT-B† (0.824). Frozen
    `stretch` rows: DINOv2-S 0.596 / 0.387 roxford, 0.827 / 0.662 rparis; B 0.648 /
-   0.424, 0.888 / 0.759.
+   0.424, 0.888 / 0.759. **Done — it does not beat them.** Trained 100 epochs, best SfM
+   epoch kept: S 0.575 / 0.375, 0.793 / 0.599 (−0.021 … −0.064); B 0.640 / 0.405, 0.874 /
+   0.742 (−0.008 … −0.019). SfM validation peaks by epoch ~40 and then slides.
 4. **LoRA** on the same DINOv2-S/B, then on DINOv3-L, the tier's best frozen row. The
    question it answers is whether retrieval training adds anything *without* overwriting
    what 142M-image pretraining learned, and it is what makes ViT-L trainable at all on
@@ -492,7 +494,8 @@ Order of work, cheapest first:
    fine-tuning value, so lr, rank and target modules are new knobs, recorded in the run
    config and chosen on SfM validation; adapters are merged into the weights after
    training (`peft`'s `merge_and_unload`), so the checkpoint is a plain model and the
-   evaluation path does not change.
+   evaluation path does not change. Implemented: `cbir train --lora-rank R --lr X`
+   (adapters on q/k/v/o; `lr` is required, there is no published value).
 
 Whether full fine-tuning of ViT-L fits 16 GB is unmeasured — about 5 GB of weights,
 gradients and Adam state in fp32 plus activations, so possibly with bf16. Measure before
