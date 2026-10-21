@@ -19,10 +19,19 @@ training and validation need not know which one they are driving: the CNN keeps 
 aspect ratio and caps the longer side at 362, the ViT squashes into IRT's square. `load`
 is a plain function rather than a method so DataLoader workers can decode with it without
 holding the network, and `square` says whether its outputs can be stacked into a batch.
+
+The ViT can instead train through **LoRA** adapters (Hu et al. 2021, `2106.09685`): the
+pretrained weights stay frozen and each targeted projection learns a rank-`r` update
+`W + (alpha / r) B A`. It changes far fewer weights, so it cannot overwrite what
+pretraining learned the way full fine-tuning can — measured to cost DINOv2 points here —
+and it keeps ViT-L's optimizer state small. `exported_state` merges the update into
+the weights, so a checkpoint is a plain network and the evaluation path never sees an
+adapter.
 """
 
 from __future__ import annotations
 
+import copy
 import functools
 
 import torch
@@ -105,6 +114,11 @@ def load_square(path: str, *, spec: Spec, side: int) -> torch.Tensor:
         return preprocess(image, spec, side, "stretch", "bicubic")
 
 
+LORA_TARGETS = ("q_proj", "k_proj", "v_proj", "o_proj")
+"""The attention projections — the usual LoRA placement, and named alike in every family
+here (DINOv2, DINOv3, DeiT) under transformers 5."""
+
+
 class RetrievalViT(torch.nn.Module):
     """A pretrained ViT to L2-normalized CLS token, trainable end to end — IRT's network.
 
@@ -116,7 +130,15 @@ class RetrievalViT(torch.nn.Module):
     so a checkpoint written by the loop is read back by `cbir evaluate vit --checkpoint`.
     """
 
-    def __init__(self, model: Model, *, image_size: int | None = None) -> None:
+    def __init__(
+        self,
+        model: Model,
+        *,
+        image_size: int | None = None,
+        lora_rank: int | None = None,
+        lora_alpha: float | None = None,
+        lora_targets: tuple[str, ...] = LORA_TARGETS,
+    ) -> None:
         super().__init__()
         if model not in SPECS:
             raise ValueError(f"unknown model {model!r}, expected one of {sorted(SPECS)}")
@@ -128,8 +150,22 @@ class RetrievalViT(torch.nn.Module):
             raise ValueError(f"{model} takes {spec.native} x {spec.native} only, got image_size={image_size}")
         if image_size % spec.patch:
             raise ValueError(f"image_size must be a multiple of the patch size {spec.patch}, got {image_size}")
+        if lora_rank is not None and lora_rank < 1:
+            raise ValueError(f"lora_rank must be a positive integer, got {lora_rank}")
+        if lora_rank is None and lora_alpha is not None:
+            raise ValueError("lora_alpha scales a LoRA update; it needs lora_rank")
         assert CHECKPOINT_PREFIX == "network."  # the attribute name below must match it
         self.network = load_network(spec)
+        self.lora_rank = lora_rank
+        if lora_rank is not None:
+            from peft import LoraConfig, get_peft_model
+
+            # alpha = rank by default: a scale of 1, so the rank does not also move the
+            # effective step size.
+            config = LoraConfig(r=lora_rank, lora_alpha=lora_alpha or lora_rank, target_modules=list(lora_targets))
+            # Freezes every pretrained weight and adds the zero-initialized adapters: at
+            # step 0 the network is exactly the frozen one.
+            self.network = get_peft_model(self.network, config)
         self.backbone = model
         self.spec = spec
         self.dim = spec.width
@@ -141,3 +177,14 @@ class RetrievalViT(torch.nn.Module):
         """`(B, 3, s, s)` batch to `(B, width)` unit vectors."""
         cls = self.network(pixel_values=images).last_hidden_state[:, 0]
         return torch.nn.functional.normalize(cls, p=2.0, dim=1, eps=EPS)
+
+    def exported_state(self) -> dict[str, torch.Tensor]:
+        """The state dict of the network as evaluation loads it: with any LoRA update
+        merged into the weights, under the pretrained model's own key names.
+
+        Merged on a copy, so training continues on the unmerged adapters.
+        """
+        if self.lora_rank is None:
+            return self.state_dict()
+        merged = copy.deepcopy(self.network).merge_and_unload()
+        return {f"{CHECKPOINT_PREFIX}{key}": value for key, value in merged.state_dict().items()}

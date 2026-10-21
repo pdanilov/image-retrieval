@@ -40,7 +40,7 @@ def test_the_defaults_are_the_reference_command():
     # `image_size=None` resolves per family: 362 for a CNN, the native size for a ViT.
     assert (config.image_size, IMAGE_SIZE, config.neg_num) == (None, 362, 5)
     assert (config.query_size, config.pool_size) == (2000, 22000)
-    assert (config.lr, config.weight_decay, config.batch_size) == (5e-7, 1e-6, 5)
+    assert (config.resolved_lr(), config.weight_decay, config.batch_size) == (5e-7, 1e-6, 5)
 
 
 def test_a_checkpoint_we_write_is_one_the_eval_path_can_read(tmp_path):

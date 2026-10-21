@@ -45,6 +45,9 @@ from cbir.training.tuples import (
 )
 from cbir.training.whitening import PAIRS, attach, fit
 
+LR = 5e-7
+"""The reference's published learning rate, which IRT keeps: a full fine-tuning value."""
+
 PROJECT = "cbir-train"
 """Kept apart from the `cbir` project that holds evaluation runs: these are curves over
 epochs, those are one terminal row per configuration, and mixing them makes both harder
@@ -99,6 +102,12 @@ class TrainConfig:
     PCA on SfM at evaluation, not with the supervised projection fitted here. `weights`
     does not apply — the model name fixes the pretrained checkpoint.
 
+    `lora_rank` trains a transformer through LoRA adapters on its attention projections
+    instead of every weight (see `net.py`); `lora_alpha` defaults to the rank. LoRA has
+    no published learning rate — the recipe's 5e-7 is a full fine-tuning value, under
+    which zero-initialized adapters barely move — so `lr` must then be passed, and chosen
+    on SfM validation, never on the benchmark.
+
     `entropy_weight` is IRT_R's lambda on the KoLeo term (see `loss.koleo`), computed over
     each tuple's descriptors. Zero is plain contrastive training, IRT_L.
     """
@@ -106,7 +115,7 @@ class TrainConfig:
     backbone: Backbone | Model = "vgg16"
     weights: WeightSource = "caffe"
     epochs: int = 30
-    lr: float = 5e-7
+    lr: float | None = None
     weight_decay: float = 1e-6
     lr_gamma: float = 0.99005  # exp(-0.01)
     batch_size: int = 5
@@ -122,6 +131,8 @@ class TrainConfig:
     min_delta: float = 0.001
     resume: bool = True
     entropy_weight: float = 0.0
+    lora_rank: int | None = None
+    lora_alpha: float | None = None
     workers: int = WORKERS
     seed: int = 0
     out: Path = field(default=Path("data/runs"))
@@ -138,6 +149,13 @@ class TrainConfig:
         if self.backbone not in MARGIN:
             raise ValueError(f"no published margin for {self.backbone!r}; pass --margin explicitly")
         return MARGIN[self.backbone]
+
+    def resolved_lr(self) -> float:
+        if self.lr is not None:
+            return self.lr
+        if self.lora_rank is not None:
+            raise ValueError("LoRA has no published learning rate; pass --lr, chosen on SfM validation")
+        return LR
 
     def resolved_whiten(self) -> bool:
         if self.whiten is None:
@@ -336,11 +354,17 @@ def train(config: TrainConfig, device: str | None = None, log=_log) -> Path:
     model = _build(config).to(device)
     margin = config.resolved_margin()
     whiten = config.resolved_whiten()
-    optimizer = torch.optim.Adam(model.parameters(), lr=config.lr, weight_decay=config.weight_decay)
+    # Trainable parameters only: under LoRA the pretrained weights are frozen, and Adam
+    # would otherwise carry state for every one of them. A CNN trains all of its own.
+    trainable = [parameter for parameter in model.parameters() if parameter.requires_grad]
+    lr = config.resolved_lr()
+    optimizer = torch.optim.Adam(trainable, lr=lr, weight_decay=config.weight_decay)
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=config.lr_gamma)
 
     train_corpus, val_corpus = Corpus.load("train"), Corpus.load("val")
-    run = f"{config.backbone}-{_pooling(model)}-margin{margin}-lr{config.lr:g}"
+    run = f"{config.backbone}-{_pooling(model)}-margin{margin}-lr{lr:g}"
+    if config.lora_rank is not None:
+        run += f"-lora{config.lora_rank}" + (f"a{config.lora_alpha:g}" if config.lora_alpha is not None else "")
     if config.entropy_weight:
         run += f"-koleo{config.entropy_weight:g}"
     run += f"-seed{config.seed}"
@@ -452,7 +476,11 @@ def train(config: TrainConfig, device: str | None = None, log=_log) -> Path:
 def _build(config: TrainConfig) -> torch.nn.Module:
     """The network `config` trains: IRT's ViT for a transformer backbone, else GeM."""
     if config.vit:
-        return RetrievalViT(config.backbone, image_size=config.image_size)
+        return RetrievalViT(
+            config.backbone, image_size=config.image_size, lora_rank=config.lora_rank, lora_alpha=config.lora_alpha
+        )
+    if config.lora_rank is not None:
+        raise ValueError("LoRA is implemented for transformer backbones only")
     image_size = config.image_size if config.image_size is not None else IMAGE_SIZE
     return RetrievalNet(config.backbone, p=config.p, weights=config.weights, image_size=image_size)
 
@@ -544,8 +572,12 @@ def _save(
     `best.pth` is the artifact that gets evaluated and stays free of training state —
     which also keeps it a third of the size.
     """
+    # `last.pth` resumes training, so it keeps LoRA adapters unmerged; `best.pth` is what
+    # evaluation reads, so it carries the merged, plain network.
+    export = getattr(model, "exported_state", model.state_dict)
+    state = model.state_dict() if optimizer is not None else export()
     payload = {
-        "state_dict": model.state_dict(),
+        "state_dict": state,
         "meta": {
             "architecture": config.backbone,
             "pooling": _pooling(model),
