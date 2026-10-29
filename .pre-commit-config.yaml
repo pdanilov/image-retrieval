@@ -28,10 +28,16 @@ repos:
   # group). The upstream nbstripout hook was tried first and pre-commit's isolated
   # environment build for it stalled, blocking commits entirely -- a hook that cannot
   # install is worse than the problem it solves, so this avoids the isolation.
+  #
+  # Beyond outputs and execution counts, the extra keys drop the kernel spec and
+  # `language_info`, whose exact interpreter version says which machine last ran the
+  # notebook and nothing about the analysis. CI runs this same hook (`pre-commit run
+  # nbstripout --all-files`), so a commit that skipped it locally still cannot land dirty;
+  # the arguments live here only, and nbstripout 0.9 reads no config file.
   - repo: local
     hooks:
       - id: nbstripout
         name: nbstripout
-        entry: uv run nbstripout
+        entry: uv run nbstripout --extra-keys "metadata.kernelspec metadata.language_info"
         language: system
         types: [jupyter]
