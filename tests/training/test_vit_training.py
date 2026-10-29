@@ -178,3 +178,19 @@ def test_a_tuple_through_the_loop_is_one_batch_with_the_same_loss(net, paths):
 
     assert calls == [len(paths)]
     assert loss == pytest.approx(float(expected), abs=1e-5)
+
+
+def test_a_published_safetensors_checkpoint_scores_like_the_pth(net, image_path, tmp_path):
+    # The mirror publishes `.safetensors` converted from `best.pth`; evaluation must read
+    # the conversion as exactly the network the `.pth` holds.
+    from cbir.descriptors.serialization import read, write
+
+    _save(tmp_path / "best.pth", net, TrainConfig(backbone=SMALL), epoch=1, metrics={})
+    write(tmp_path / "best.safetensors", *read(tmp_path / "best.pth"))
+
+    def scored(name):
+        return FrozenViT(SMALL, resize="stretch", checkpoint=str(tmp_path / name), device="cpu").extract(
+            [Image.open(image_path)]
+        )
+
+    np.testing.assert_array_equal(scored("best.safetensors"), scored("best.pth"))

@@ -17,8 +17,41 @@ def test_unpublished_backbone_is_rejected():
 
 
 def test_missing_file_names_the_download(monkeypatch, tmp_path):
+    from cbir.descriptors import mirror
+
     monkeypatch.setenv("CBIR_WEIGHTS_ROOT", str(tmp_path))
-    with pytest.raises(FileNotFoundError, match="download it from"):
+    monkeypatch.setattr(mirror, "SHA256", {})
+    with pytest.raises(FileNotFoundError, match="not mirrored — download it from"):
+        weights.load_caffe(torch.nn.Linear(1, 1), "resnet101")
+
+
+def test_an_unreachable_mirror_names_both_ways_to_get_the_file(monkeypatch, tmp_path):
+    # Private repositories: no token, or no access, must read as "cannot get it", not as
+    # a crash deep inside the Hub client.
+    from huggingface_hub.errors import LocalEntryNotFoundError
+
+    from cbir.descriptors import mirror
+
+    monkeypatch.setenv("CBIR_WEIGHTS_ROOT", str(tmp_path))
+
+    def offline(name):
+        raise LocalEntryNotFoundError("offline")
+
+    monkeypatch.setattr(mirror, "fetch", offline)
+    with pytest.raises(FileNotFoundError, match=r"imagenet-caffe-resnet101 could not be read.*download it from"):
+        weights.load_caffe(torch.nn.Linear(1, 1), "resnet101")
+
+
+def test_a_changed_mirror_file_is_not_passed_off_as_unreachable(monkeypatch, tmp_path):
+    from cbir.descriptors import mirror
+
+    monkeypatch.setenv("CBIR_WEIGHTS_ROOT", str(tmp_path))
+
+    def tampered(name):
+        raise ValueError("refusing a changed file")
+
+    monkeypatch.setattr(mirror, "fetch", tampered)
+    with pytest.raises(ValueError, match="refusing a changed file"):
         weights.load_caffe(torch.nn.Linear(1, 1), "resnet101")
 
 

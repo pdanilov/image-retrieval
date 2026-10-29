@@ -7,14 +7,18 @@ authors = [
     { name = "Pavel Danilov", email = "pdanilov94@gmail.com" }
 ]
 requires-python = ">=3.13"
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = [
     "aiohttp>=3.14.2",
     "datasets<4.0",
+    "huggingface-hub>=1.33",
     "numpy>=2.5.1",
     "opencv-python-headless>=4.10",
     "peft>=0.21.2",
     "pillow>=12.3.0",
     "pytorch-metric-learning>=2.9.0",
+    "safetensors>=0.8",
     "scikit-learn>=1.9.0",
     "torch>=2.7.0",
     "torchvision>=0.26.0",

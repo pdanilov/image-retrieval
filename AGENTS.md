@@ -294,7 +294,8 @@ Implementation details that change the numbers:
 `revisitop`, so published numbers exist for exactly the protocol implemented here.
 SPoC's original numbers are on the *old* Oxford5k/Paris6k and cannot validate this
 harness. Pretrained weights come from `cmp.felk.cvut.cz` — same host as the `gnd_*.pkl`
-files, so fetch them the same way rather than through a hub loader. Reference numbers
+files — and that host stays the public source for them (see Weight files below for the
+private mirror the loaders fall back to). Reference numbers
 (multi-scale, whitened, from `filipradenovic/cnnimageretrieval-pytorch`):
 
 | model                        | ROxf (M) | RPar (M) | ROxf (H) | RPar (H) |
@@ -508,6 +509,42 @@ objective), not another schedule on this one.
 Whether full fine-tuning of ViT-L fits 16 GB is unmeasured — about 5 GB of weights,
 gradients and Adam state in fp32 plus activations, so possibly with bf16. Measure before
 ruling it in or out.
+
+## Weight files
+
+Checkpoints that are not on the Hugging Face Hub under their authors' names — the
+Caffe-converted ImageNet weights, Radenović et al.'s fine-tuned GeM checkpoints, and every
+checkpoint `cbir train` produced — are kept as `.safetensors` in **private** model
+repositories under `pdanilov`, one per network:
+
+| repositories | contents |
+|---|---|
+| `imagenet-caffe-{vgg16,resnet50,resnet101,resnet152}` | mirrors of the reference's Caffe ImageNet weights |
+| `retrieval-sfm120k-{vgg16,resnet101}-gem` | mirrors of the published GeM checkpoints |
+| `gem-{vgg16,resnet101}-sfm120k-reproduced` | the GeM recipe trained here |
+| `irt-deit-{small,base}-distilled-224` | IRT trained here |
+| `dinov2-sfm120k-finetune` | the negative DINOv2 runs, full and LoRA |
+
+DINOv3 fine-tunes are not mirrored (gated license, noise-floor result).
+
+- **Resolution order** (`cnn/weights.py::locate`): a local `.pth` from the original host
+  under `CBIR_WEIGHTS_ROOT` first, else the mirror. Trained checkpoints are addressed as
+  `--checkpoint mirror:<repository>/<file>.safetensors`; that string is what the run row
+  records, and with the pinned hash it fixes the content in a way a local path does not
+  (`data/runs/.../best.pth` was overwritten between rows more than once).
+- **Every download is checked** against `descriptors/mirror_sha256.json`. A mismatch is an
+  error, never a fallback. An unreachable repository (no token, no access, offline) is
+  reported as such, with the original URL — so the code still works for anyone without
+  access, by the manual download.
+- **Access** needs a token that can read the owner's private repositories: `hf auth login`
+  locally, `HF_TOKEN` in CI. A token scoped only to gated models will not see them.
+- **The format** (`descriptors/serialization.py`) round-trips the `.pth` exactly, whitening
+  dtypes included, and is deterministic: re-running `scripts/export_safetensors.py` on the
+  originals reproduces the pinned hashes. That script is the only way files enter the
+  mirror — it verifies each conversion bit for bit and rewrites the manifest. Re-scoring six
+  recorded rows from the converted files reproduced them to the last digit.
+- **Do not link the private repositories from the README.** Readers cannot open them; the
+  README's public path is the original host.
 
 ## Search backend
 

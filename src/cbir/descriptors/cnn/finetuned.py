@@ -31,13 +31,14 @@ exposed as a knob, so it cannot contradict them.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 
 import numpy as np
 import torch
 
+from cbir.descriptors import mirror
 from cbir.descriptors.cnn.compression import PCACompression
-from cbir.descriptors.cnn.weights import apply_state, root
+from cbir.descriptors.cnn.weights import apply_state, locate
+from cbir.descriptors.serialization import read
 
 URL = "https://cmp.felk.cvut.cz/cnnimageretrieval/data/networks/retrieval-SfM-120k"
 FILES = {
@@ -99,20 +100,17 @@ def load(backbone: str, checkpoint: str | None = None) -> FineTuned:
     deliberately — the alternative was a second loader that could drift from this one.
     """
     if checkpoint is not None:
-        path = Path(checkpoint)
+        path = mirror.resolve(checkpoint)
         if not path.exists():
             raise FileNotFoundError(f"checkpoint {path} not found")
     else:
         if backbone not in FILES:
             raise ValueError(f"no fine-tuned checkpoint published for {backbone!r}; have {sorted(FILES)}")
-        path = root() / FILES[backbone]
-        if not path.exists():
-            raise FileNotFoundError(f"{path} not found — download it from {URL}/{FILES[backbone]}")
+        path = locate(FILES[backbone], URL)
 
-    # `weights_only=False` because `meta` holds numpy arrays, not just tensors. The file
-    # is one we downloaded from a known URL, not user input.
-    checkpoint = torch.load(path, map_location="cpu", weights_only=False)
-    state, meta = checkpoint["state_dict"], checkpoint["meta"]
+    state, meta = read(path)
+    if meta is None:
+        raise ValueError(f"{path.name} is a bare state dict, not a fine-tuned checkpoint")
 
     if meta["architecture"] != backbone:
         raise ValueError(f"{path.name} is a {meta['architecture']} checkpoint, not {backbone}")

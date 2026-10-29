@@ -8,7 +8,8 @@ off-the-shelf row measured on one is not the same experiment as on the other.
 That matters here because our ResNet101 rows miss the published ones by 7-15 mAP while
 VGG reproduces, and weight provenance is the difference we had not tested.
 
-Manual download, like the SfM corpus. The files omit `num_batches_tracked`, which the
+A manual download from the reference's host, or fetched from the project's mirror as
+`.safetensors` when no local copy exists. The files omit `num_batches_tracked`, which the
 architecture only uses to update running statistics during training; loading is
 therefore non-strict, but *only* those buffers may be absent.
 """
@@ -38,6 +39,29 @@ CAFFE_FILES = {
 }
 
 
+def locate(filename: str, url: str) -> Path:
+    """The local `.pth` if the original was downloaded, else the mirror's copy."""
+    from cbir.descriptors import mirror
+
+    local = root() / filename
+    if local.exists():
+        return local
+    from huggingface_hub.errors import HfHubHTTPError, LocalEntryNotFoundError
+
+    name = mirror.reference(filename)
+    if name in mirror.SHA256:
+        try:
+            return mirror.fetch(name)
+        # Unreachable, not wrong: no network, no token, or no read access to the private
+        # repository. A hash mismatch is a ValueError and is deliberately not caught here.
+        except (HfHubHTTPError, LocalEntryNotFoundError) as error:
+            raise FileNotFoundError(
+                f"{local} not found, and {mirror.OWNER}/{name.split('/')[0]} could not be read "
+                f"({type(error).__name__}) — log in with access to it, or download it from {url}/{filename}"
+            ) from error
+    raise FileNotFoundError(f"{local} not found and not mirrored — download it from {url}/{filename}")
+
+
 def root() -> Path:
     """Where the weight files live; `CBIR_WEIGHTS_ROOT` overrides."""
     return Path(os.environ.get("CBIR_WEIGHTS_ROOT", Path.home() / ".cache" / "cbir" / "weights"))
@@ -48,11 +72,10 @@ def load_caffe(model: torch.nn.Module, backbone: str) -> torch.nn.Module:
     if backbone not in CAFFE_FILES:
         raise ValueError(f"no caffe weights published for {backbone!r}; have {sorted(CAFFE_FILES)}")
 
-    path = root() / CAFFE_FILES[backbone]
-    if not path.exists():
-        raise FileNotFoundError(f"{path} not found — download it from {CAFFE_URL}/{CAFFE_FILES[backbone]}")
+    from cbir.descriptors.serialization import read
 
-    state = torch.load(path, map_location="cpu", weights_only=True)
+    path = locate(CAFFE_FILES[backbone], CAFFE_URL)
+    state, _ = read(path)
     return apply_state(model, state, source=path.name, backbone=backbone)
 
 

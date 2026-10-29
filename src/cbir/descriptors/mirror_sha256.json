@@ -1,0 +1,18 @@
+{
+  "dinov2-sfm120k-finetune/dinov2-vitb14-cls-margin0.85-lr5e-07-seed0.safetensors": "1fb7c561fe6d8bd835e39e7c0547df67d85f32e178922b81dff3736a17e789c8",
+  "dinov2-sfm120k-finetune/dinov2-vits14-cls-margin0.85-lr0.0001-lora8-seed0.safetensors": "324860d42e0e9a1c24e28487ea169bd7fd814080dd5560ff4bc0f28c9dac56cb",
+  "dinov2-sfm120k-finetune/dinov2-vits14-cls-margin0.85-lr1e-05-lora8-seed0.safetensors": "7c13c275614546158ceae17385d7141c536b8ee7212305c210adfe3cd63229dc",
+  "dinov2-sfm120k-finetune/dinov2-vits14-cls-margin0.85-lr3e-05-lora8-seed0.safetensors": "0da332b245eedf5829c552db2a4e33c738c666c5e9853312cb9b66c8f30e2272",
+  "dinov2-sfm120k-finetune/dinov2-vits14-cls-margin0.85-lr5e-07-seed0.safetensors": "230a5805509d6182640d730b2eb2b4bd3f465d1fccf135c9a8f5cb9ca1820ef5",
+  "gem-resnet101-sfm120k-reproduced/resnet101-gem-margin0.85-lr5e-07-seed0.safetensors": "d741367ace2454682fe18bcd762a1297540a90e45b39619fb976fb4182351e5a",
+  "gem-vgg16-sfm120k-reproduced/vgg16-gem-margin0.7-lr1e-06-seed0.safetensors": "f01b55d33ace3704fde71abf75dc5b104645a49b1e460ed4fec72ceb6c79e2de",
+  "gem-vgg16-sfm120k-reproduced/vgg16-gem-margin0.7-lr5e-07-seed0.safetensors": "fc77ce01632b512296dd1c3b87c03fd60943438f78e3c5fe918bef98006a75a4",
+  "imagenet-caffe-resnet101/imagenet-caffe-resnet101-features-10a101d.safetensors": "87de1c2d8465bca1258a7053cd7e68ea9b98bf6446ab997dfb2dc987195aa716",
+  "imagenet-caffe-resnet152/imagenet-caffe-resnet152-features-1011020.safetensors": "f29c11902dec35b5daef88e8c1ebea6e3009ba7a83bddceec60137eadf0f9c0f",
+  "imagenet-caffe-resnet50/imagenet-caffe-resnet50-features-ac468af.safetensors": "9464e86985715522becc147c6dc6e4ec33c58dc10cd092ab5e8e719062cdc5e7",
+  "imagenet-caffe-vgg16/imagenet-caffe-vgg16-features-d369c8e.safetensors": "233c239d2e897d0c663bee72cde6c58b62c852f44952fba10e51abd46ef5eadc",
+  "irt-deit-base-distilled-224/deit-vitb16-dist-224-cls-margin0.85-lr5e-07-seed0.safetensors": "7aceb8fbe0c3b58ab76789e4f14505d440c0e88654e4344b9c43fa3fc76ebaa8",
+  "irt-deit-small-distilled-224/deit-vits16-dist-224-cls-margin0.85-lr5e-07-seed0.safetensors": "56b3fc391b3f81b32702b43d151aaeaf4f10ab3d30146b3fe70dc2f64bf719c8",
+  "retrieval-sfm120k-resnet101-gem/retrievalSfM120k-resnet101-gem-b80fb85.safetensors": "6ba749f4f2153c9399664ad5513719807ce42b976697a8032c0e850a774ee996",
+  "retrieval-sfm120k-vgg16-gem/retrievalSfM120k-vgg16-gem-b4dcdc6.safetensors": "58a22389b8fe7109145cfa0d596a37fb8b67f8372b193adb9776d414608a51e7"
+}
