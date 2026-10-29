@@ -348,13 +348,16 @@ def load_checkpoint(network: torch.nn.Module, model: str, path: str) -> None:
     Strict: a checkpoint that does not cover every weight would leave part of the
     pretrained network in place and report its numbers as the fine-tuned one's.
     """
-    payload = torch.load(path, map_location="cpu", weights_only=False)
-    architecture = payload["meta"]["architecture"]
+    from cbir.descriptors import mirror
+    from cbir.descriptors.serialization import read
+
+    weights, meta = read(mirror.resolve(path))
+    architecture = (meta or {}).get("architecture")
     if architecture != model:
         raise ValueError(f"{path} is a {architecture} checkpoint, not {model}")
     state = {
         key.removeprefix(CHECKPOINT_PREFIX): value
-        for key, value in payload["state_dict"].items()
+        for key, value in weights.items()
         if key.startswith(CHECKPOINT_PREFIX)
     }
     network.load_state_dict(state, strict=True)

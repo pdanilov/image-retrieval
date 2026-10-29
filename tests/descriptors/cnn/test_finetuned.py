@@ -20,7 +20,9 @@ pytestmark = pytest.mark.filterwarnings("ignore::UserWarning")
 
 
 def _available(backbone: str) -> bool:
-    return (finetuned.root() / finetuned.FILES[backbone]).exists()
+    from cbir.descriptors.cnn.weights import root
+
+    return (root() / finetuned.FILES[backbone]).exists()
 
 
 needs_checkpoint = pytest.mark.skipif(not _available("vgg16"), reason="fine-tuned vgg16 checkpoint not downloaded")
