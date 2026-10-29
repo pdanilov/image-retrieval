@@ -12,7 +12,7 @@ from typing import Any
 
 from cbir.configs.classic import ClassicConfig
 from cbir.configs.cnn import CNNConfig
-from cbir.configs.transformer import ViTConfig
+from cbir.configs.vit import ViTConfig
 from cbir.data.holdout import EvalDataset
 
 DescriptorConfig = ClassicConfig | CNNConfig | ViTConfig

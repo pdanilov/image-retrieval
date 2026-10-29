@@ -1,4 +1,4 @@
-"""Named configurations, one per row the README quotes.
+"""Named configurations, one per row the docs quote.
 
 The interesting runs carry up to ten flags, and the fine-tuned ones carry a combination
 that only works one way -- `--backbone resnet101 --weights sfm120k --p learned --scales
@@ -33,7 +33,7 @@ PRESETS: dict[str, DescriptorConfig] = {
     "neural-codes-vgg16": NeuralCodesConfig(backbone="vgg16", dim=None),
     # --- off-the-shelf CNN: the reference's own configuration -------------------------
     # Caffe weights, multi-scale, whitened, and VGG without its trailing max-pool --
-    # matching Radenovic et al. rather than torchvision's defaults. See README.
+    # matching Radenovic et al. rather than torchvision's defaults. See docs/cnn.md.
     "gem-r101": PooledConfig(backbone="resnet101", p=3.0, weights="caffe", scales=MULTI_SCALE, dim=2048, whiten=True),
     "gem-vgg16": PooledConfig(
         backbone="vgg16", p=3.0, weights="caffe", last_pool=False, scales=MULTI_SCALE, dim=512, whiten=True

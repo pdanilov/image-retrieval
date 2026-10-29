@@ -29,7 +29,7 @@ import torch
 
 from cbir.descriptors.cnn.pooling import Backbone
 from cbir.descriptors.cnn.weights import WeightSource
-from cbir.descriptors.transformer.vit import SPECS, Model
+from cbir.descriptors.vit.frozen import SPECS, Model
 from cbir.training.loss import MARGIN, VIT_MARGIN, contrastive_loss, koleo
 from cbir.training.net import RetrievalNet, RetrievalViT
 from cbir.training.tuples import (
@@ -94,7 +94,7 @@ class TrainConfig:
     zero, and a supervisor that restarts a non-resumable job is worse than no supervisor.
     Turn it off only to force a fresh run into a directory that already holds one.
 
-    A transformer `backbone` (any CLS model in the frozen tier's `SPECS`) trains IRT's
+    A ViT `backbone` (any CLS model in the frozen tier's `SPECS`) trains IRT's
     network instead (El-Nouby et al. 2021), which runs the same recipe with the backbone
     swapped: margin 0.85, inputs squashed into a square, CLS for GeM. Three knobs then
     resolve differently. `image_size` defaults to the checkpoint's native size (224 for
@@ -102,7 +102,7 @@ class TrainConfig:
     PCA on SfM at evaluation, not with the supervised projection fitted here. `weights`
     does not apply — the model name fixes the pretrained checkpoint.
 
-    `lora_rank` trains a transformer through LoRA adapters on its attention projections
+    `lora_rank` trains a ViT through LoRA adapters on its attention projections
     instead of every weight (see `net.py`); `lora_alpha` defaults to the rank. LoRA has
     no published learning rate — the recipe's 5e-7 is a full fine-tuning value, under
     which zero-initialized adapters barely move — so `lr` must then be passed, and chosen
@@ -475,13 +475,13 @@ def train(config: TrainConfig, device: str | None = None, log=_log) -> Path:
 
 
 def _build(config: TrainConfig) -> torch.nn.Module:
-    """The network `config` trains: IRT's ViT for a transformer backbone, else GeM."""
+    """The network `config` trains: IRT's ViT for a ViT backbone, else GeM."""
     if config.vit:
         return RetrievalViT(
             config.backbone, image_size=config.image_size, lora_rank=config.lora_rank, lora_alpha=config.lora_alpha
         )
     if config.lora_rank is not None:
-        raise ValueError("LoRA is implemented for transformer backbones only")
+        raise ValueError("LoRA is implemented for ViT backbones only")
     image_size = config.image_size if config.image_size is not None else IMAGE_SIZE
     return RetrievalNet(config.backbone, p=config.p, weights=config.weights, image_size=image_size)
 

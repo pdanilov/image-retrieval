@@ -1,6 +1,6 @@
 """Presets must name configurations that were actually measured.
 
-A preset is a shorthand for a row in the README, so the thing worth testing is not that
+A preset is a shorthand for a row in the docs, so the thing worth testing is not that
 it constructs -- importing the module does that -- but that it still corresponds to a
 run in `results/runs.jsonl`. A preset that drifts from the record is worse than no
 preset: it looks like the documented configuration and is not.

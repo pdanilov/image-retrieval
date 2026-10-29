@@ -39,7 +39,7 @@ from transformers import AutoModel
 from cbir.data.crop import crop_query
 from cbir.data.images import image_paths, iter_images
 from cbir.data.revisitop import download
-from cbir.descriptors.transformer.vit import SPECS, Spec
+from cbir.descriptors.vit.frozen import SPECS, Spec
 from cbir.eval.metrics import evaluate
 from cbir.eval.runner import ground_truth
 from cbir.search.exact import exact_search

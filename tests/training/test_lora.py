@@ -8,7 +8,7 @@ import pytest
 import torch
 from PIL import Image
 
-from cbir.descriptors.transformer.vit import FrozenViT
+from cbir.descriptors.vit.frozen import FrozenViT
 from cbir.training.loop import TrainConfig, _resume, _save, train_epoch
 from cbir.training.net import RetrievalViT
 
@@ -112,7 +112,7 @@ def test_lora_has_no_default_learning_rate():
 def test_lora_knobs_are_refused_where_they_mean_nothing():
     from cbir.training.loop import _build
 
-    with pytest.raises(ValueError, match="transformer backbones only"):
+    with pytest.raises(ValueError, match="ViT backbones only"):
         _build(TrainConfig(backbone="vgg16", lora_rank=8))
     with pytest.raises(ValueError, match="needs lora_rank"):
         RetrievalViT(SMALL, lora_alpha=16.0)

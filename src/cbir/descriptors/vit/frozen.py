@@ -1,6 +1,6 @@
 """Frozen vision transformers, read out as one global vector each.
 
-The transformer era's off-the-shelf baseline, and the counterpart of `cnn/pooling.py`:
+The ViT era's off-the-shelf baseline, and the counterpart of `cnn/pooling.py`:
 a network trained for something other than retrieval, read out as a global descriptor
 with no training here. What changed is the pretraining. DINOv2 (Oquab et al., TMLR
 2024, `2304.07193`) is self-distilled on 142M curated images, an objective that already
@@ -18,7 +18,7 @@ Four families, one readout each:
 * **DeiT** (Touvron et al. 2021, `2012.12877`): the same ViT architecture trained as a
   supervised ImageNet classifier, distilled from a CNN teacher through a second token.
   The descriptor is CLS, as in IRT, which fine-tunes exactly these checkpoints; the
-  distillation token beside it is not used. DeiT is the transformer counterpart of the
+  distillation token beside it is not used. DeiT is the ViT counterpart of the
   CNN tier's ImageNet ResNets: the "before" row for retrieval fine-tuning.
 * **SigLIP 2** (Tschannen et al. 2025, `2502.14786`): there is no CLS token. The vision
   tower ends in an attention-pooling head, and its output is the image embedding the
@@ -199,7 +199,7 @@ Readout = Literal["native", "mean", "gem"]
 * `native` — each family's own image embedding: CLS after the final LayerNorm
   (DINOv2/DINOv3/DeiT), the attention-pooling head (SigLIP 2). Every published row.
 * `mean` — the average of the patch tokens, prefix tokens excluded. The patch grid is
-  the transformer's counterpart of a conv map, so this is SPoC over tokens.
+  the ViT's counterpart of a conv map, so this is SPoC over tokens.
 * `gem` — generalized mean over the patch tokens, GeM over tokens. The tokens are
   LayerNorm outputs and *signed*, unlike a post-ReLU conv map, and GeM's clamp to a
   small positive floor discards every negative component before the power — so `gem`

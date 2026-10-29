@@ -1,4 +1,4 @@
-"""Every `cbir` command in the README has to parse.
+"""Every `cbir` command in the README and docs/ has to parse.
 
 The README documented `--sweep-k` for some time after the flag became `--sweep`; seven
 copy-pasted commands failed at argument parsing, and nothing noticed because nothing
@@ -16,13 +16,15 @@ import pytest
 
 import cbir.cli as cli
 
-README = Path(__file__).resolve().parents[1] / "README.md"
+ROOT = Path(__file__).resolve().parents[1]
+DOCUMENTS = [ROOT / "README.md", *sorted((ROOT / "docs").glob("*.md"))]
+"""The README and every page under docs/: commands moved between them must stay tested."""
 COMMAND = re.compile(r"^\s*(?:#\s*or:\s*)?uv run (cbir .*?)$", re.MULTILINE)
 
 
 def commands() -> list[str]:
-    """Every `uv run cbir ...` line in the README, line continuations joined."""
-    text = README.read_text()
+    """Every `uv run cbir ...` line in the README and docs/, line continuations joined."""
+    text = "\n".join(document.read_text() for document in DOCUMENTS)
     # Join `\`-continued lines first, or the second half parses as its own command.
     text = re.sub(r"\\\n\s*", " ", text)
     # A trailing `# ...` is prose in the code block, not an argument.

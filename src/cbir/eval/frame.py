@@ -63,7 +63,7 @@ VIT_WIDTH = {
 }
 """Each frozen ViT's hidden size, which is its descriptor's width.
 
-Duplicated from `descriptors/transformer/vit.py` for the same reason as `CONV_CHANNELS`:
+Duplicated from `descriptors/vit/frozen.py` for the same reason as `CONV_CHANNELS`:
 that module imports torch, and a test asserts the two maps agree.
 """
 

@@ -6,7 +6,7 @@ import torch
 from PIL import Image
 
 from cbir.descriptors.cnn.neural_codes import IMAGENET_MEAN, IMAGENET_STD
-from cbir.descriptors.transformer.vit import IMAGE_SIZE, SPECS, FrozenViT, _patch_tokens, _unexpectedly_missing
+from cbir.descriptors.vit.frozen import IMAGE_SIZE, SPECS, FrozenViT, _patch_tokens, _unexpectedly_missing
 
 SMALL = "dinov2-vits14"
 DINOV3 = "dinov3-vits16"

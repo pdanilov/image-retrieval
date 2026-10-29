@@ -46,7 +46,7 @@ rather than passed in so a run cannot silently use the wrong one for its backbon
 
 
 VIT_MARGIN = 0.85
-"""IRT's margin for every transformer it fine-tunes (§4.2: "the default hyper-parameters
+"""IRT's margin for every ViT it fine-tunes (§4.2: "the default hyper-parameters
 of Radenović et al."), the same value as resnet101's."""
 
 KOLEO_EPS = 1e-8

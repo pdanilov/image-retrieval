@@ -30,6 +30,12 @@ the evaluation harness outranks descriptor quality, speed, and code elegance.
     inference. At the benchmark's actual scale (5–6k images) everything fits
     comfortably, so do not build streaming/sharding machinery for a problem we do
     not have.
+- **Host RAM is the other ceiling, and VLAD at k = 4096 crosses it.** Its database matrix
+  alone is 4993 x 524288 float32 = 10.5 GB, `normalize` copies it, and the cached RootSIFT
+  descriptors are ~20 GB on top: the encode took WSL down twice, at 31 GB and at 64 GB.
+  k = 1024 peaks at ~32 GB. Before re-running k >= 2048, either make the encoding work in
+  place or run it under a memory guard that kills it before the VM goes — and keep any
+  log out of `/tmp`, which a WSL restart wipes.
 - After any change to the torch install, sanity-check the GPU actually works — a
   successful install is not evidence of a working kernel:
   ```
@@ -47,9 +53,9 @@ src/cbir/
   descriptors/
     classic/     SIFT/RootSIFT → k-means vocabulary → BoW, VLAD, (Fisher)
     cnn/         Neural Codes; GeM (⊃ SPoC, MAC), R-MAC, whitening
-    transformer/ frozen ViTs, one image embedding each (DINOv2, DINOv3, SigLIP 2)
+    vit/         frozen ViTs, one image embedding each (DINOv2, DINOv3, SigLIP 2, DeiT)
   training/      fine-tuning for retrieval on retrieval-SfM-120k: the trainable half of
-                 each neural tier (CNN today; the transformer tier's lands here too)
+                 each neural tier, CNN and ViT alike
   search/        exact torch matmul search (no ANN — see Search backend)
   eval/          mAP / mP@k, the three protocols, the run pipeline, results serialization
   cli.py         entry point: download / evaluate / results
@@ -203,7 +209,7 @@ Three eras, evaluated under the same protocol:
   VLAD. Vocabulary trained on a held-out set, *never* on the evaluation database.
 - **CNN era**: activations of a frozen CNN as global descriptors — Neural Codes, SPoC,
   MAC, R-MAC, GeM. See below; this tier is the bridge between the other two.
-- **Transformer era**: vision transformers as global descriptors, split like the CNN
+- **ViT era**: vision transformers (ViTs) as global descriptors, split like the CNN
   tier into a **frozen** half (DINOv2, DINOv3, SigLIP 2, each read out by its own image
   embedding) and a
   **trainable** half (IRT, then DINOv2 fine-tuned in full and with LoRA), L2-normalized, cosine similarity.
@@ -316,11 +322,11 @@ scope — including siaMAC and GeM, whose weights happen to have been produced b
 fine-tuning that someone else already ran. Running that fine-tuning here is a different
 matter and needs its own justification.
 
-### Transformer-era descriptors
+### ViT-era descriptors
 
 Split the same way as the CNN tier, and for the same reason: a network trained for
 something else, read out as-is, is a different experiment from one trained here for
-retrieval. Frozen extractors live in `descriptors/transformer/`; training reuses
+retrieval. Frozen extractors live in `descriptors/vit/`; training reuses
 `training/`.
 
 **What changed from the CNN era is the pretraining, not the readout.** DINOv2 is
@@ -403,13 +409,13 @@ datasets. So:
   DINO's script and our protocol ViT-L moves only 0.009. Context outside the box is what
   a weak descriptor leans on — a finding worth keeping, not noise.
 - **The DINOv3 paper's own ViT-L/16 row does reproduce, cropped:** 63.1 roxford Hard
-  published, 0.637 here at the 224 protocol. That is the transformer tier's validation
+  published, 0.637 here at the 224 protocol. That is the ViT tier's validation
   row. Its *other* rows are looser: its DINOv2-L (55.7 Hard) sits 2.9 above ours, its
   DINOv2-g (78.2 / 58.2) far above our cropped ViT-g (69.7 / 49.4), and its SigLIP 2-L
   (21.4 Hard) about 7 above ours. The paper does not say how it fed models other than
   its own, so those gaps are recorded, not attributed.
 
-GeM stays the harness validator; DINOv3-L/16 at 224 is the transformer tier's. Beyond
+GeM stays the harness validator; DINOv3-L/16 at 224 is the ViT tier's. Beyond
 that the checks are internal: the ranking across model sizes (DINOv2 L above g on
 roxford, as in its paper) and the cropped/uncropped split above.
 
@@ -543,8 +549,8 @@ DINOv3 fine-tunes are not mirrored (gated license, noise-floor result).
   originals reproduces the pinned hashes. That script is the only way files enter the
   mirror — it verifies each conversion bit for bit and rewrites the manifest. Re-scoring six
   recorded rows from the converted files reproduced them to the last digit.
-- **Do not link the private repositories from the README.** Readers cannot open them; the
-  README's public path is the original host.
+- **Do not link the private repositories from the README or docs/.** Readers cannot open them; the
+  public path is the original host, listed in `docs/usage.md`.
 
 ## Search backend
 
