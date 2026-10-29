@@ -236,7 +236,7 @@ the width — because the network was trained for the question being asked inste
 borrowed from a classifier.
 
 That stays true only within the CNN era: a frozen DINOv3 beats this row on both protocols
-without any retrieval training — see the [transformer tier](transformers.md).
+without any retrieval training — see the [ViT tier](vit.md).
 
 ## Neural Codes
 

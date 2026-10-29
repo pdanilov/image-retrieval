@@ -26,13 +26,13 @@ jobs:
       - name: Format check
         run: uv run ruff format --check .
 
-      # The transformer tests download small checkpoints from Hugging Face; caching them
+      # The ViT tests download small checkpoints from Hugging Face; caching them
       # keeps every run from re-fetching ~300 MB and from hitting the Hub's rate limits.
       - name: Cache Hugging Face models
         uses: actions/cache@v4
         with:
           path: ~/.cache/huggingface/hub
-          key: hf-models-${{ hashFiles('src/cbir/descriptors/transformer/vit.py') }}
+          key: hf-models-${{ hashFiles('src/cbir/descriptors/vit/frozen.py') }}
           restore-keys: hf-models-
 
       - name: Test

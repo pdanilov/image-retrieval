@@ -59,7 +59,7 @@ that was actually measured.
 
 ## Weights
 
-The transformer models and torchvision's ImageNet weights download themselves from the
+The ViT models and torchvision's ImageNet weights download themselves from the
 Hugging Face Hub and PyTorch. Two sets of files do not: they come from the reference
 implementation's host and go into `~/.cache/cbir/weights/` (or wherever `CBIR_WEIGHTS_ROOT`
 points), under the names below.

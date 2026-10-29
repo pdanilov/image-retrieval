@@ -12,10 +12,10 @@ from cbir.configs.classic import BoWConfig, FisherConfig, VLADConfig
 from cbir.configs.cnn import NeuralCodesConfig, PooledConfig, RMACConfig
 from cbir.configs.presets import PRESETS
 from cbir.configs.run import DescriptorConfig, RunConfig
-from cbir.configs.transformer import ViTConfig
+from cbir.configs.vit import ViTConfig
 from cbir.data.holdout import EvalDataset
 from cbir.data.revisitop import SUPPORTED, download
-from cbir.descriptors.transformer.vit import Model as ViTModel
+from cbir.descriptors.vit.frozen import Model as ViTModel
 from cbir.eval.metrics import Protocol
 from cbir.eval.results import RunRecord, format_param, latest, load
 
@@ -245,7 +245,7 @@ def train_cmd(
     default sizes. The corpus is a manual download — see `descriptors/cnn/sfm.py`.
 
     Args:
-        backbone: Architecture to fine-tune. A transformer name trains IRT's network
+        backbone: Architecture to fine-tune. A ViT name trains IRT's network
             instead: the same recipe, CLS readout, inputs squashed into a square.
         weights: Which ImageNet weights to start from. The reference initializes from
             its Caffe-converted ones and the published numbers were reached that way, so
@@ -255,22 +255,22 @@ def train_cmd(
             summed loss; raising it without also changing the reduction diverges. Required
             with LoRA, which has no published value.
         margin: Contrastive hinge width. Defaults to the published value for the
-            backbone — 0.85 for resnet101 and every transformer, 0.7 for vgg16.
+            backbone — 0.85 for resnet101 and every ViT, 0.7 for vgg16.
         query_size: Tuples sampled per epoch.
         pool_size: Images descriptors are extracted for, to mine negatives from.
         image_size: Longest side during training — 362 by default, and evaluation still
-            runs at 1024. For a transformer, the square's side; defaults to the
+            runs at 1024. For a ViT, the square's side; defaults to the
             checkpoint's native size, which DeiT requires.
         seed: Seeds sampling and initialization.
         whiten: Fit the supervised projection onto `best.pth` when training ends, which
             is what makes the checkpoint complete — see `cbir whiten`. Turning it off
             leaves a network that has to be evaluated against held-out PCA instead.
-            Defaults on for a CNN; off, and unavailable, for a transformer, which IRT
+            Defaults on for a CNN; off, and unavailable, for a ViT, which IRT
             reduces with PCA on SfM at evaluation.
         whiten_pairs: Matching pairs the projection is fitted on.
         entropy_weight: IRT_R's lambda on the KoLeo differential-entropy term. 0 is
             plain contrastive training (IRT_L).
-        lora_rank: Train a transformer through rank-`r` LoRA adapters on its attention
+        lora_rank: Train a ViT through rank-`r` LoRA adapters on its attention
             projections, pretrained weights frozen, instead of every weight. The saved
             `best.pth` has the update merged, so `cbir evaluate` reads it as any other.
         lora_alpha: LoRA's scale numerator; defaults to the rank (a scale of 1).

@@ -1,4 +1,4 @@
-"""Typed configs for the transformer tier.
+"""Typed configs for the ViT tier.
 
 Same shape as the other tiers: a frozen dataclass carrying only the knobs its technique
 honours, plus `prepare` and `train_and_encode`, so `eval/runner.py` runs it without
@@ -17,7 +17,7 @@ from cbir.data.images import iter_images
 from cbir.descriptors.cnn.compression import PCACompression
 from cbir.descriptors.cnn.prepare import EvalImages, prepare_image_inputs
 from cbir.descriptors.cnn.sfm import WhitenSource, whitening_paths
-from cbir.descriptors.transformer.vit import IMAGE_SIZE, SPECS, FrozenViT, Interpolation, Model, Readout, Resize
+from cbir.descriptors.vit.frozen import IMAGE_SIZE, SPECS, FrozenViT, Interpolation, Model, Readout, Resize
 
 
 @dataclass(frozen=True)
@@ -38,7 +38,7 @@ class ViTConfig:
             and DeiT.
         resize: How an image is fitted to `image_size`. `pad` is the documented
             protocol; `aspect` and `crop` were ruled out as the reason the DINOv2
-            paper's table does not reproduce — see `descriptors/transformer/vit.py`.
+            paper's table does not reproduce — see `descriptors/vit/frozen.py`.
             `stretch` squashes to the square, IRT's protocol for its rows and for the
             frozen DeiT rows they are compared with.
         interpolation: Resampling filter. The papers name none; bicubic is what
@@ -52,7 +52,7 @@ class ViTConfig:
             — with `whiten` on that still fits a full-width PCA, since whitening is a
             rotation and rescale rather than a compression.
         whiten: Divide each PCA direction by its standard deviation. The published
-            transformer rows use none, so it is off by default; the CNN tier's
+            ViT rows use none, so it is off by default; the CNN tier's
             off-the-shelf rows all use it, which is why it exists here.
         whiten_source: Corpus the projection is fitted on: `held_out` (the sibling
             benchmark, as the CNN rows use) or the retrieval-SfM landmark sets

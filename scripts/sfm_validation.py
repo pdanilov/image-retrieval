@@ -18,7 +18,7 @@ import argparse
 
 import torch
 
-from cbir.descriptors.transformer.vit import SPECS
+from cbir.descriptors.vit.frozen import SPECS
 from cbir.training.loop import validate
 from cbir.training.net import RetrievalViT
 from cbir.training.tuples import Corpus

@@ -69,9 +69,9 @@ ordinal ramp: neither provenance is "more" than the other, and the whole point o
 charts is to ask whether they land in the same place."""
 
 OBJECTIVE = {"self-supervised": "#2a78d6", "image-text": "#eb6834", "supervised": "#1baf7a"}
-"""Categorical slots 1-3 for what a transformer was pretrained to do.
+"""Categorical slots 1-3 for what a ViT was pretrained to do.
 
-The transformer notebooks colour by objective, not by family: the objective is the
+The ViT notebooks colour by objective, not by family: the objective is the
 finding (the same ViT architecture lands below VLAD or above everything depending on it),
 and three slots is the cap at which the palette clears every pair in both modes. DINOv2
 and DINOv3 share a colour and are told apart by label."""

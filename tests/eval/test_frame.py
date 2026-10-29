@@ -89,7 +89,7 @@ def test_the_neural_codes_width_agrees_with_the_real_one():
 
 
 def test_vit_widths_match_the_descriptor_module():
-    from cbir.descriptors.transformer.vit import SPECS
+    from cbir.descriptors.vit.frozen import SPECS
     from cbir.eval.frame import VIT_WIDTH
 
     assert {name: spec.width for name, spec in SPECS.items()} == VIT_WIDTH

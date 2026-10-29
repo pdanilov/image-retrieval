@@ -1,4 +1,4 @@
-# Transformer tier
+# ViT tier
 
 Part of [image-retrieval](../README.md). Vision transformers as global descriptors: frozen DINOv2, DINOv3, SigLIP 2 and DeiT, then retrieval training on top (IRT, full fine-tuning, LoRA).
 
@@ -13,10 +13,10 @@ documents (App. D.8): the longer side resized to 224, the image centred on a bla
 each family normalized as it was trained. Queries are bbx-cropped, as for every other
 tier.
 
-![Every frozen transformer at the protocol, coloured by pretraining objective, against the best classic and fine-tuned CNN rows](transformer_models.png)
+![Every frozen ViT at the protocol, coloured by pretraining objective, against the best classic and fine-tuned CNN rows](vit_models.png)
 
-Figures in this section and the next come from `notebooks/05_transformers_comparison.ipynb`
-and `notebooks/06_transformers_training.ipynb`.
+Figures in this section and the next come from `notebooks/05_vit_comparison.ipynb`
+and `notebooks/06_vit_training.ipynb`.
 
 ```
 uv run cbir evaluate --dataset roxford5k vit --model dinov3-vitl16
@@ -48,7 +48,7 @@ DINOv3 ViT-L is the tier's best on roxford5k, 0.081 Medium and 0.109 Hard above 
 ViT-L — and even DINOv3 ViT-B beats DINOv2 ViT-L there. On rparis6k the two generations
 are level, DINOv2 slightly ahead.
 
-It is also the first transformer row that reproduces a published number under this
+It is also the first ViT row that reproduces a published number under this
 benchmark's protocol: the DINOv3 paper reports 63.1 roxford5k Hard for ViT-L/16, against
 0.637 here. That paper says it follows Radenović et al.'s protocol, and the match suggests
 it cropped its queries — unlike the DINOv2 paper (below).
@@ -80,7 +80,7 @@ points below the DINOv3 paper's SigLIP 2 ViT-L (21.4 Hard), whitened about 2.5; 
 paper does not say how it fed SigLIP, so the gap is unexplained rather than attributed.
 
 DeiT is the same ViT architecture trained as a supervised ImageNet classifier (distilled
-from a CNN teacher, hence †) — the transformer counterpart of the CNN tier's ImageNet
+from a CNN teacher, hence †) — the ViT counterpart of the CNN tier's ImageNet
 ResNets, and the checkpoints the IRT recipe fine-tunes. Frozen, it is the weakest row in
 the project, below VLAD: a classifier's CLS token describes the *class*, and every image
 here is a building. It is the "before" row for retrieval fine-tuning, not a contender.
@@ -93,7 +93,7 @@ theirs. Between that protocol and this one it moves 0.102 roxford5k Medium, agai
 
 ## Resolution
 
-![roxford5k mAP against input size for the DINO models](transformer_resolution.png)
+![roxford5k mAP against input size for the DINO models](vit_resolution.png)
 
 224 px is low for a landmark that fills part of a 1024-px photograph, so the DINO and
 SigLIP 2 models were also run larger (DeiT's two sizes are in the table above). SigLIP 2 ships one checkpoint per resolution, so its rows are three
@@ -118,7 +118,7 @@ resolve.
 ## Whitening
 
 The off-the-shelf CNN rows are all PCA-whitened, so the same fit was tried on the
-transformers: on the held-out benchmark at full width, as those rows are, and on sfm30k
+ViTs: on the held-out benchmark at full width, as those rows are, and on sfm30k
 for DINOv3.
 
 | model | whitened on | roxford5k M / H | gain | rparis6k M / H | gain |
@@ -138,9 +138,9 @@ broad semantic directions. DeiT does not move.
 
 ## CLS against pooled patch tokens
 
-![Whitening and readout ablations on roxford5k Medium](transformer_ablations.png)
+![Whitening and readout ablations on roxford5k Medium](vit_ablations.png)
 
-The patch grid is a transformer's counterpart of a conv map, so the CNN tier's pooling
+The patch grid is a ViT's counterpart of a conv map, so the CNN tier's pooling
 applies to it directly: `--readout mean` averages the patch tokens (SPoC over tokens),
 `--readout gem --p 3.0` takes their generalized mean. The prefix tokens — CLS, DINOv3's
 four registers, DeiT's distillation token — are excluded, and every batch checks that
@@ -186,7 +186,7 @@ on both datasets, which is what pins the difference on the protocol rather than 
 implementation. Changing padding, interpolation or the centre-crop transform did not
 close the gap (those runs are recorded, `--resize aspect|crop`, `--interpolation`).
 
-## Training a transformer here (IRT)
+## Training a ViT here (IRT)
 
 The trainable half starts with IRT (El-Nouby et al. 2021,
 [2102.05644](https://arxiv.org/abs/2102.05644)): the GeM recipe of the [CNN tier](cnn.md#training-a-network-here) with the backbone
@@ -214,7 +214,7 @@ would credit training with five points the geometry earned.
 | **B† 224, trained here** | **0.422** | **0.207** | **0.674** | **0.430** |
 | B† 224, IRT Table 7 | 39.5 | 17.4 | 67.5 | 43.6 |
 
-![Every trained configuration before and after training, with IRT's Table 7 marked](transformer_training.png)
+![Every trained configuration before and after training, with IRT's Table 7 marked](vit_training.png)
 
 **IRT reproduces.** S† lands within 0.8 of the paper on all four numbers, and B† within
 0.6 on rparis6k. B† is 2.7 / 3.3 *above* the paper on roxford5k: larger than S†'s gaps,
@@ -295,7 +295,7 @@ fine-tuning gains most on SfM without losing most, so the ordering holds within 
 across methods. roxford5k is noisier, and its one cell above frozen (lr 1e-4, Hard
 +0.011) comes with Medium below it.
 
-![SfM validation gain against the rparis6k change for DINOv2-S](transformer_sfm_vs_benchmark.png) Selecting the learning rate on SfM
+![SfM validation gain against the rparis6k change for DINOv2-S](vit_sfm_vs_benchmark.png) Selecting the learning rate on SfM
 validation, as the protocol requires, picks 1e-4: the worst LoRA row on rparis6k. **For
 DINO, SfM validation points the wrong way.** All three rows are recorded, not just the
 selected one, because that is the finding.

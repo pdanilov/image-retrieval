@@ -11,15 +11,17 @@ benchmark, under the same rules, in one harness:
 
 - **classic** (the diploma's era): hand-crafted SIFT features and a visual vocabulary;
 - **CNN**: features of image-classification networks, then networks trained for retrieval;
-- **transformer**: today's foundation models (DINOv2, DINOv3, SigLIP 2), frozen and
+- **ViT** (vision transformer): today's foundation models (DINOv2, DINOv3, SigLIP 2), frozen and
   fine-tuned.
 
 ![For two query photos, the top eight results from each era's method, marked correct, wrong or ignored](docs/retrieval_examples.png)
 
 The top eight results for two queries from revisited Oxford, picked by a fixed rule rather
-than for looks: the query most typical of DINOv3's score, and the one most typical of
-VLAD's. Green is a photo of the same building, red a wrong one; grey photos are too
-ambiguous to score either way. ([notebooks/07_retrieval_examples.ipynb](notebooks/07_retrieval_examples.ipynb);
+than for looks: in the first, DINOv3 scores what it scores on average; in the second, VLAD
+does. Green is a photo of the same building, red a wrong one, grey a photo the benchmark's
+annotators marked too hard to call, which counts neither way. DINOv3's grey top three in
+the first example are the right tower, shot badly — at dusk, behind a pub sign,
+cut off by the frame — and it finds them anyway. ([notebooks/07_retrieval_examples.ipynb](notebooks/07_retrieval_examples.ipynb);
 VLAD runs at k = 1024 here.)
 
 ## Results
@@ -38,16 +40,16 @@ every correct photo is ranked above every wrong one. **Medium** counts all corre
 | CNN | GeM `p = 3`, ResNet101, whitened | no | 0.461 | 0.186 |
 | CNN | GeM ResNet101, trained here (19 epochs) | yes | 0.636 | 0.372 |
 | CNN | GeM ResNet101, Radenović et al.'s checkpoint | yes | 0.654 | 0.404 |
-| transformer | DeiT-B/16† 224 (supervised), frozen | no | 0.291 | 0.091 |
-| transformer | DeiT-B/16† 224, IRT recipe, trained here | yes | 0.422 | 0.207 |
-| transformer | SigLIP 2 ViT-L/16 512 (image-text), whitened | no | 0.432 | 0.189 |
-| transformer | DINOv2 ViT-L/14 224 (self-supervised) | no | 0.729 | 0.528 |
-| transformer | DINOv3 ViT-L/16 224 (self-supervised) | no | **0.810** | **0.637** |
-| transformer | DINOv3 ViT-L/16 224, LoRA on SfM, trained here | yes | 0.811 | 0.636 |
+| ViT | DeiT-B/16† 224 (supervised), frozen | no | 0.291 | 0.091 |
+| ViT | DeiT-B/16† 224, IRT recipe, trained here | yes | 0.422 | 0.207 |
+| ViT | SigLIP 2 ViT-L/16 512 (image-text), whitened | no | 0.432 | 0.189 |
+| ViT | DINOv2 ViT-L/14 224 (self-supervised) | no | 0.729 | 0.528 |
+| ViT | DINOv3 ViT-L/16 224 (self-supervised) | no | **0.810** | **0.637** |
+| ViT | DINOv3 ViT-L/16 224, LoRA on SfM, trained here | yes | 0.811 | 0.636 |
 
 The DeiT rows are measured the way IRT, the recipe that trains them, measures: every image
 squashed into a square. The rest use the DINOv3 paper's padded square. The
-[transformer page](docs/transformers.md) has both for every model.
+[ViT page](docs/vit.md) has both for every model.
 
 What it shows:
 
@@ -100,7 +102,7 @@ lists them. Networks trained in this project are not published.
 | [docs/usage.md](docs/usage.md) | install, download, evaluate, presets, reading results back |
 | [docs/classic.md](docs/classic.md) | BoW, VLAD and Fisher vectors: results and how they were run |
 | [docs/cnn.md](docs/cnn.md) | Neural Codes to GeM, weight provenance, validation, training a CNN here |
-| [docs/transformers.md](docs/transformers.md) | DINOv2/v3, SigLIP 2, DeiT; resolution, whitening, readout; IRT, fine-tuning and LoRA on DINO |
+| [docs/vit.md](docs/vit.md) | DINOv2/v3, SigLIP 2, DeiT; resolution, whitening, readout; IRT, fine-tuning and LoRA on DINO |
 | [docs/glossary.md](docs/glossary.md) | the terms the other pages use |
 | [notebooks/](notebooks/) | every figure, regenerated from `results/runs.jsonl` |
 | [AGENTS.md](AGENTS.md) | the rules the harness follows, and why |

@@ -12,7 +12,7 @@ every recorded row in order to serve the one that produces none.
 
 The ViT is IRT's network (El-Nouby et al. 2021): the frozen tier's checkpoint, read out
 by its CLS token, trained end to end. Its network and preprocessing come from
-`descriptors/transformer/vit.py` rather than being re-derived, for the same reason.
+`descriptors/vit/frozen.py` rather than being re-derived, for the same reason.
 
 Each network also owns `load`, the path-to-tensor step for its own family, so mining,
 training and validation need not know which one they are driving: the CNN keeps the
@@ -39,7 +39,7 @@ from PIL import Image
 
 from cbir.descriptors.cnn.pooling import CHANNELS, Backbone, PooledCNN
 from cbir.descriptors.cnn.weights import WeightSource
-from cbir.descriptors.transformer.vit import CHECKPOINT_PREFIX, SPECS, Model, Spec, load_network, preprocess
+from cbir.descriptors.vit.frozen import CHECKPOINT_PREFIX, SPECS, Model, Spec, load_network, preprocess
 from cbir.training.tuples import IMAGE_SIZE, load_tensor
 
 EPS = 1e-6

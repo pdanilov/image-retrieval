@@ -1,11 +1,11 @@
 import numpy as np
 import pytest
 
-import cbir.configs.transformer as transformer_config
+import cbir.configs.vit as vit_config
 from cbir.configs.run import descriptor_params
-from cbir.configs.transformer import ViTConfig
+from cbir.configs.vit import ViTConfig
 from cbir.descriptors.cnn.prepare import EvalImages
-from cbir.descriptors.transformer.vit import SPECS
+from cbir.descriptors.vit.frozen import SPECS
 
 WIDTH = 16
 
@@ -34,9 +34,9 @@ def wired(monkeypatch):
         built.append(_FakeViT(*args, **kwargs))
         return built[-1]
 
-    monkeypatch.setattr(transformer_config, "FrozenViT", build)
-    monkeypatch.setattr(transformer_config, "iter_images", lambda paths: list(paths))
-    monkeypatch.setattr(transformer_config, "crop_query", lambda image, box: (image, tuple(box)))
+    monkeypatch.setattr(vit_config, "FrozenViT", build)
+    monkeypatch.setattr(vit_config, "iter_images", lambda paths: list(paths))
+    monkeypatch.setattr(vit_config, "crop_query", lambda image, box: (image, tuple(box)))
 
     inputs = EvalImages(
         held_out_paths=[f"h{i}" for i in range(20)],
@@ -60,7 +60,7 @@ def test_whitening_is_fitted_on_the_held_out_images_only(wired, monkeypatch):
         def transform(self, vectors):
             return vectors[:, :4]
 
-    monkeypatch.setattr(transformer_config, "PCACompression", _FakePCA)
+    monkeypatch.setattr(vit_config, "PCACompression", _FakePCA)
 
     database, queries = ViTConfig(whiten=True, shrinkage=0.1).train_and_encode(inputs)
 

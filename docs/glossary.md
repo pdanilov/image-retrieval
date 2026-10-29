@@ -102,5 +102,5 @@ applied to DeiT.
 **LoRA.** Low-rank adaptation: training a small add-on to each weight matrix while the
 pretrained weights stay frozen.
 
-**`pad`, `stretch`.** How an image becomes the square a transformer takes: centred on black
+**`pad`, `stretch`.** How an image becomes the square a ViT takes: centred on black
 bars (`pad`, the DINOv3 protocol) or squashed (`stretch`, IRT's).

@@ -11,7 +11,7 @@ import pytest
 import torch
 from PIL import Image
 
-from cbir.descriptors.transformer.vit import FrozenViT
+from cbir.descriptors.vit.frozen import FrozenViT
 from cbir.training.loop import TrainConfig, _save
 from cbir.training.loss import KOLEO_EPS, koleo
 from cbir.training.net import RetrievalViT
@@ -22,7 +22,7 @@ SMALL = "dinov2-vits14"
 # --- configuration -------------------------------------------------------------------
 
 
-def test_every_transformer_gets_irts_margin():
+def test_every_vit_gets_irts_margin():
     assert TrainConfig(backbone="deit-vitb16-dist-384").resolved_margin() == 0.85
     assert TrainConfig(backbone=SMALL).resolved_margin() == 0.85
 
