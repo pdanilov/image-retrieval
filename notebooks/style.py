@@ -80,6 +80,11 @@ STATE = {"frozen": "#2a78d6", "trained here": "#eb6834"}
 """Before and after retrieval training — the same two slots as `PROVENANCE`, for the
 same kind of question: do the two land in the same place?"""
 
+MATCH = {"correct": "#0ca30c", "wrong": "#d03b3b", "ignored": "#52514e"}
+"""Whether a retrieved image is right — a status, so the palette's reserved status steps
+(good, critical) rather than series colours, and never alone: every mark also carries ✓,
+✗ or a dash."""
+
 PROTOCOLS = ["easy", "medium", "hard"]
 
 RC = {

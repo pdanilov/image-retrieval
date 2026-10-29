@@ -30,6 +30,12 @@ the evaluation harness outranks descriptor quality, speed, and code elegance.
     inference. At the benchmark's actual scale (5–6k images) everything fits
     comfortably, so do not build streaming/sharding machinery for a problem we do
     not have.
+- **Host RAM is the other ceiling, and VLAD at k = 4096 crosses it.** Its database matrix
+  alone is 4993 x 524288 float32 = 10.5 GB, `normalize` copies it, and the cached RootSIFT
+  descriptors are ~20 GB on top: the encode took WSL down twice, at 31 GB and at 64 GB.
+  k = 1024 peaks at ~32 GB. Before re-running k >= 2048, either make the encoding work in
+  place or run it under a memory guard that kills it before the VM goes — and keep any
+  log out of `/tmp`, which a WSL restart wipes.
 - After any change to the torch install, sanity-check the GPU actually works — a
   successful install is not evidence of a working kernel:
   ```

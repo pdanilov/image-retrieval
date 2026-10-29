@@ -17,6 +17,7 @@ from collections.abc import Iterable
 from time import perf_counter
 from typing import Any
 
+import numpy as np
 from datasets import Dataset
 
 from cbir.configs.run import RunConfig, descriptor_params
@@ -56,15 +57,7 @@ def run(config: RunConfig, *, record: bool = True, inputs: Any = None) -> RunRec
     keys them by both.
     """
     started = perf_counter()
-
-    if inputs is None:
-        inputs = config.descriptor.prepare(config.dataset)
-    database_vectors, query_vectors = config.descriptor.train_and_encode(inputs)
-
-    # Queries live in their own split (4993 database + 70 query images = the full 5063
-    # of oxford5k), so no query appears in its own ranking and nothing needs excluding
-    # here -- the only removals are the protocol's ignored images, inside `evaluate`.
-    rankings = exact_search(query_vectors, database_vectors)
+    rankings = rank(config, inputs=inputs)
 
     # A second `download` call, but it resolves from the HF cache that
     # `prepare_classic_inputs` just populated. Threading the query split out of
@@ -90,6 +83,21 @@ def run(config: RunConfig, *, record: bool = True, inputs: Any = None) -> RunRec
         append(run_record)
         track(run_record)
     return run_record
+
+
+def rank(config: RunConfig, *, inputs: Any = None) -> np.ndarray:
+    """`(queries, database)` indices, each row the database sorted best match first.
+
+    The ranking `run` scores, without scoring or recording it — for looking at what a
+    method actually returns. `inputs` as in `run`.
+    """
+    if inputs is None:
+        inputs = config.descriptor.prepare(config.dataset)
+    database_vectors, query_vectors = config.descriptor.train_and_encode(inputs)
+    # Queries live in their own split (4993 database + 70 query images = the full 5063
+    # of oxford5k), so no query appears in its own ranking and nothing needs excluding
+    # here -- the only removals are the protocol's ignored images, inside `evaluate`.
+    return exact_search(query_vectors, database_vectors)
 
 
 def run_all(configs: Iterable[RunConfig], *, record: bool = True, verbose: bool = False) -> list[RunRecord]:

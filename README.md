@@ -14,6 +14,14 @@ benchmark, under the same rules, in one harness:
 - **transformer**: today's foundation models (DINOv2, DINOv3, SigLIP 2), frozen and
   fine-tuned.
 
+![For two query photos, the top eight results from each era's method, marked correct, wrong or ignored](docs/retrieval_examples.png)
+
+The top eight results for two queries from revisited Oxford, picked by a fixed rule rather
+than for looks: the query most typical of DINOv3's score, and the one most typical of
+VLAD's. Green is a photo of the same building, red a wrong one; grey photos are too
+ambiguous to score either way. ([notebooks/07_retrieval_examples.ipynb](notebooks/07_retrieval_examples.ipynb);
+VLAD runs at k = 1024 here.)
+
 ## Results
 
 Revisited Oxford (roxford5k), 70 query photos against 4993. The score is **mAP**: 1.0 means
