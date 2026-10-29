@@ -11,7 +11,7 @@ There is no leakage: these are Flickr landmark photographs from SfM reconstructi
 the released sets exclude Oxford and Paris by construction. Runs record `whiten_source`
 so a row always says which corpus produced its projection.
 
-Not downloaded automatically -- it is 37.7 GB. See the README for the fetch.
+Not downloaded automatically -- the archive is 40.5 GB. `docs/usage.md` gives the fetch.
 """
 
 from __future__ import annotations
@@ -58,7 +58,7 @@ def whitening_paths(source: WhitenSource) -> list[str]:
     manifest = root() / PKL[source]
     if not manifest.exists():
         raise FileNotFoundError(
-            f"{manifest} not found — the retrieval-SfM corpus is a manual download (see README). "
+            f"{manifest} not found — the retrieval-SfM corpus is a manual download (see docs/usage.md). "
             f"Set CBIR_SFM_ROOT if it lives elsewhere."
         )
     with manifest.open("rb") as f:

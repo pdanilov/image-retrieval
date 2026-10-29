@@ -543,8 +543,8 @@ DINOv3 fine-tunes are not mirrored (gated license, noise-floor result).
   originals reproduces the pinned hashes. That script is the only way files enter the
   mirror — it verifies each conversion bit for bit and rewrites the manifest. Re-scoring six
   recorded rows from the converted files reproduced them to the last digit.
-- **Do not link the private repositories from the README.** Readers cannot open them; the
-  README's public path is the original host.
+- **Do not link the private repositories from the README or docs/.** Readers cannot open them; the
+  public path is the original host, listed in `docs/usage.md`.
 
 ## Search backend
 
