@@ -24,6 +24,7 @@ Two details in the mining are not obvious and both matter:
 
 from __future__ import annotations
 
+import os
 import pickle
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -63,6 +64,9 @@ def loader(dataset, *, batch_size: int | None, workers: int) -> torch.utils.data
     run, the heartbeat would catch only after the fact. `forkserver` starts workers from
     a clean process; the cost is a second or two per loader.
     """
+    # Capped at the CPUs this process may use: more decoders than cores only contend, and a
+    # 4-core CI runner gets 4 rather than a warning about 8.
+    workers = min(workers, os.process_cpu_count() or 1)
     context = "forkserver" if workers else None
     return torch.utils.data.DataLoader(
         dataset, batch_size=batch_size, num_workers=workers, multiprocessing_context=context

@@ -102,7 +102,9 @@ def test_track_is_a_no_op_without_trackio_installed(monkeypatch):
 
     def no_trackio(name, *args, **kwargs):
         if name == "trackio":
-            raise ImportError("No module named 'trackio'")
+            # What Python raises for an absent package: `name` is what tells it apart from
+            # a trackio that is installed but broken.
+            raise ModuleNotFoundError("No module named 'trackio'", name="trackio")
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr("builtins.__import__", no_trackio)
@@ -124,7 +126,9 @@ def test_replay_reports_zero_without_trackio(monkeypatch):
 
     def no_trackio(name, *args, **kwargs):
         if name == "trackio":
-            raise ImportError("No module named 'trackio'")
+            # What Python raises for an absent package: `name` is what tells it apart from
+            # a trackio that is installed but broken.
+            raise ModuleNotFoundError("No module named 'trackio'", name="trackio")
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr("builtins.__import__", no_trackio)

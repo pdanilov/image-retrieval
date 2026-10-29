@@ -38,7 +38,9 @@ def scores(monkeypatch):
         monkeypatch.setattr(loop, "RetrievalNet", _Stub)
         monkeypatch.setattr(loop.Corpus, "load", classmethod(lambda cls, split: SimpleNamespace(cids=[])))
         monkeypatch.setattr(loop, "sample_epoch", lambda *a, **k: [])
-        monkeypatch.setattr(loop, "train_epoch", lambda *a, **k: 0.1)
+        # Steps the optimizer, as the real one does: the scheduler steps right after, and
+        # stepping it first is exactly what PyTorch warns about.
+        monkeypatch.setattr(loop, "train_epoch", lambda model, tuples, optimizer, *a, **k: optimizer.step() or 0.1)
         monkeypatch.setattr(loop, "_track", lambda *a, **k: None)
         monkeypatch.setattr(loop, "validate", lambda *a, **k: {"mean_average_precision": next(seen)})
         # Stubbed by default: fitting the whitening is a real extraction pass, and these
