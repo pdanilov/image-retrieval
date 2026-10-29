@@ -13,7 +13,7 @@ documents (App. D.8): the longer side resized to 224, the image centred on a bla
 each family normalized as it was trained. Queries are bbx-cropped, as for every other
 tier.
 
-![Every frozen ViT at the protocol, coloured by pretraining objective, against the best classic and fine-tuned CNN rows](vit_models.png)
+![Every frozen ViT at the protocol, coloured by pretraining objective, against the best classic and fine-tuned CNN rows](figures/vit_models.png)
 
 Figures in this section and the next come from `notebooks/05_vit_comparison.ipynb`
 and `notebooks/06_vit_training.ipynb`.
@@ -93,7 +93,7 @@ theirs. Between that protocol and this one it moves 0.102 roxford5k Medium, agai
 
 ## Resolution
 
-![roxford5k mAP against input size for the DINO models](vit_resolution.png)
+![roxford5k mAP against input size for the DINO models](figures/vit_resolution.png)
 
 224 px is low for a landmark that fills part of a 1024-px photograph, so the DINO and
 SigLIP 2 models were also run larger (DeiT's two sizes are in the table above). SigLIP 2 ships one checkpoint per resolution, so its rows are three
@@ -138,7 +138,7 @@ broad semantic directions. DeiT does not move.
 
 ## CLS against pooled patch tokens
 
-![Whitening and readout ablations on roxford5k Medium](vit_ablations.png)
+![Whitening and readout ablations on roxford5k Medium](figures/vit_ablations.png)
 
 The patch grid is a ViT's counterpart of a conv map, so the CNN tier's pooling
 applies to it directly: `--readout mean` averages the patch tokens (SPoC over tokens),
@@ -214,7 +214,7 @@ would credit training with five points the geometry earned.
 | **B† 224, trained here** | **0.422** | **0.207** | **0.674** | **0.430** |
 | B† 224, IRT Table 7 | 39.5 | 17.4 | 67.5 | 43.6 |
 
-![Every trained configuration before and after training, with IRT's Table 7 marked](vit_training.png)
+![Every trained configuration before and after training, with IRT's Table 7 marked](figures/vit_training.png)
 
 **IRT reproduces.** S† lands within 0.8 of the paper on all four numbers, and B† within
 0.6 on rparis6k. B† is 2.7 / 3.3 *above* the paper on roxford5k: larger than S†'s gaps,
@@ -295,7 +295,7 @@ fine-tuning gains most on SfM without losing most, so the ordering holds within 
 across methods. roxford5k is noisier, and its one cell above frozen (lr 1e-4, Hard
 +0.011) comes with Medium below it.
 
-![SfM validation gain against the rparis6k change for DINOv2-S](vit_sfm_vs_benchmark.png) Selecting the learning rate on SfM
+![SfM validation gain against the rparis6k change for DINOv2-S](figures/vit_sfm_vs_benchmark.png) Selecting the learning rate on SfM
 validation, as the protocol requires, picks 1e-4: the worst LoRA row on rparis6k. **For
 DINO, SfM validation points the wrong way.** All three rows are recorded, not just the
 selected one, because that is the finding.

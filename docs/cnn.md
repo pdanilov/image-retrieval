@@ -176,7 +176,7 @@ two, and the paper does not evaluate Easy at all:
 | R–[37]–GeM published | 0.647 | 0.847 | 0.385 | 0.530 |
 | | **+0.007** | **+0.013** | **+0.019** | **+0.034** |
 
-![Off-the-shelf and fine-tuned GeM against the published rows, all three protocols](cnn_validation.png)
+![Off-the-shelf and fine-tuned GeM against the published rows, all three protocols](figures/cnn_validation.png)
 
 **This is what the exercise was for.** Every earlier validation point sat at the bottom
 of the published range, 0.40–0.46, where a 0.02 discrepancy is hard to read. Reproducing
@@ -215,7 +215,7 @@ checkpoint, and asking for one is refused rather than silently downgraded.
 
 ## Where the tiers stand
 
-![mAP against descriptor width for all three tiers on roxford5k Medium](cnn_tiers.png)
+![mAP against descriptor width for all three tiers on roxford5k Medium](figures/cnn_tiers.png)
 
 Same benchmark, same protocol, best row from each:
 
@@ -299,7 +299,7 @@ uv run cbir evaluate gem --backbone vgg16 --weights sfm120k --p learned --no-las
 Whitening is fitted automatically as the last step of training, so the checkpoint the
 command leaves behind is already complete; `cbir whiten` exists to refit one separately.
 
-![Checkpoints trained here against the published ones, all three protocols](trained_vs_published.png)
+![Checkpoints trained here against the published ones, all three protocols](figures/trained_vs_published.png)
 
 | multi-scale, supervised whitening | Easy | Medium | Hard |
 |---|---:|---:|---:|
@@ -343,7 +343,7 @@ table above already reflects the refit; the retrain is outstanding.
 
 ## What each step is worth
 
-![Supervised whitening against held-out PCA, weights held fixed](trained_whitening.png)
+![Supervised whitening against held-out PCA, weights held fixed](figures/trained_whitening.png)
 
 Read through held-out PCA instead of its own projection, the *same* trained VGG16 scores
 0.569 Medium against 0.609. The supervised projection is worth **+0.033 Medium and
@@ -356,14 +356,14 @@ command was ever published, so 5e-7 had been borrowed from the ResNet101 one. Th
 reference's own VGG16 default is 1e-6, and correcting it was worth +0.011 Medium.
 ResNet101 keeps 5e-7, which *is* published for that backbone.
 
-![Best measured row per stage against the published targets](trained_ladder.png)
+![Best measured row per stage against the published targets](figures/trained_ladder.png)
 
 Validation mAP per epoch for the three runs, from the trackio store the loop writes.
 Measured on the held-out SfM landmark split, **not** roxford5k — a different corpus and a
 different label definition, so it ranks checkpoints during a run and nothing more. Its
 saturation is exactly why it stops runs too early:
 
-![Validation mAP per epoch for the three training runs](trained_curves.png)
+![Validation mAP per epoch for the three training runs](figures/trained_curves.png)
 
 ## Two bugs this exercise found
 

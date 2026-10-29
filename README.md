@@ -14,7 +14,7 @@ benchmark, under the same rules, in one harness:
 - **ViT** (vision transformer): today's foundation models (DINOv2, DINOv3, SigLIP 2), frozen and
   fine-tuned.
 
-![For two query photos, the top eight results from each era's method, marked correct, wrong or ignored](docs/retrieval_examples.png)
+![For two query photos, the top eight results from each era's method, marked correct, wrong or ignored](docs/figures/retrieval_examples.png)
 
 The top eight results for two queries from revisited Oxford, picked by a fixed rule rather
 than for looks: in the first, DINOv3 scores what it scores on average; in the second, VLAD
