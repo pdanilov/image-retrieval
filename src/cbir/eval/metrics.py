@@ -131,11 +131,13 @@ def evaluate(
             continue
         aps.append(query_ap(ranking, positive, ignored))
         precisions.append(precision_at_k(ranking, positive, ignored, k))
+    # No answerable query leaves the averages undefined: NaN, not 0.0, which would read as
+    # "every query failed". Explicit, rather than numpy's mean of an empty list.
     return EvalResult(
         protocol=protocol,
         k=k,
-        map=float(np.mean(aps)),
-        mp_at_k=float(np.mean(precisions)),
+        map=float(np.mean(aps)) if aps else float("nan"),
+        mp_at_k=float(np.mean(precisions)) if precisions else float("nan"),
         num_queries=len(aps),
         num_excluded=num_excluded,
     )

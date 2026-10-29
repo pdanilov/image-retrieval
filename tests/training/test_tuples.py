@@ -106,3 +106,15 @@ def test_a_pair_is_always_within_one_cluster():
     val = Corpus.load("val")
 
     assert all(val.cluster[q] == val.cluster[p] for q, p in zip(val.qidxs, val.pidxs, strict=True))
+
+
+def test_decoders_never_outnumber_the_cpus(monkeypatch):
+    # A 4-core CI runner asked for the default 8 got a PyTorch warning about freezing.
+    import os
+
+    from cbir.training.tuples import loader
+
+    monkeypatch.setattr(os, "process_cpu_count", lambda: 4)
+    assert loader([], batch_size=None, workers=8).num_workers == 4
+    assert loader([], batch_size=None, workers=2).num_workers == 2
+    assert loader([], batch_size=None, workers=0).num_workers == 0

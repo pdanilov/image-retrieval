@@ -1,3 +1,5 @@
+import math
+
 import numpy as np
 import pytest
 
@@ -104,6 +106,7 @@ def test_a_protocol_with_no_positives_excludes_rather_than_scores_zero(wired, mo
     # worse than it is; the queries are dropped from both averages instead.
     assert record.metrics["hard"]["num_excluded"] == 2
     assert record.metrics["hard"]["num_queries"] == 0
+    assert math.isnan(record.metrics["hard"]["map"])  # undefined, not a score of zero
     assert record.metrics["easy"]["num_excluded"] == 0
 
 
